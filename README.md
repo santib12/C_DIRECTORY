@@ -1,38 +1,7 @@
 # C_DIRECTORY
 a directory in C.
 
-## Build and run the terminal (Windows)
-
-This repo contains a minimal in-memory filesystem terminal written in C.
-
-### Build
-
-Using GCC (MinGW / Git for Windows):
-```
-gcc terminal.c -o terminal.exe
-```
-
-Using MSVC:
-```
-cl /nologo /O2 /EHsc terminal.c /Fe:terminal.exe
-```
-
-### Run inline (no new window)
-
-- CMD:
-```
-terminal.exe
-```
-- PowerShell:
-```
-./terminal.exe
-```
-- Git Bash:
-```
-winpty ./terminal.exe
-```
-
-## Build and run the GUI terminal (own native window)
+## Build and run the GUI terminal (native window)
 
 Build with MinGW (no console window):
 ```
@@ -46,7 +15,7 @@ cl /nologo /O2 /DUNICODE /D_UNICODE gui_terminal.c /link /SUBSYSTEM:WINDOWS /OUT
 
 Run by double-clicking `gui_terminal.exe` or from CMD/PowerShell.
 
-The GUI provides an output pane and an input line. Press Enter to execute commands.
+The GUI provides a terminal-like window with a command line and scrollback. Press Enter to execute commands.
 
 ### Commands inside the terminal
 
@@ -58,7 +27,5 @@ The GUI provides an output pane and an input line. Press Enter to execute comman
 - type <name>
 - echo <text>
 - cls / clear
-- save <file>
-- load <file>
 - help
 - exit / quit
