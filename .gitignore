@@ -23,3 +23,41 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Debug and log files
+debug.log
+*.log
+
+# Additional IDE/Editor files
+*.sublime-*
+*.code-workspace
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.idea/
+*.iml
+
+# Compilation artifacts
+*.o
+*.obj
+*.so
+*.dll
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+
+# Backup files
+*~
+*.bak
+*.backup
+*.orig
+*.rej
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+
+# Additional user data (if you want to hide all user-specific content)
+data/USERS/*/System/logs/security.log

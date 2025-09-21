@@ -2742,7 +2742,7 @@ static void cmd_user(const char* username) {
             snprintf(user_msg, sizeof(user_msg), "  %s", g_root->children[i]->name);
             gui_println(user_msg);
         }
-        return; 
+        return;
     }
     
     // Check if user has authentication credentials
@@ -2765,7 +2765,7 @@ static void cmd_user(const char* username) {
         // User doesn't have authentication setup
         gui_printf("User '%s' does not have authentication setup.", username);
         gui_printf("Use: SETUP_AUTH %s <password>", username);
-        return;
+        return; 
     }
     
     strncpy(g_currentUser, username, sizeof(g_currentUser) - 1);
