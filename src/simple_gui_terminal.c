@@ -33,6 +33,7 @@ static char g_currentUser[64] = "Public";
 // Forward declarations
 static void fs_load_from_disk(void);
 static void fs_save_to_disk(void);
+static void save_filesystem_recursive(Directory* dir, FILE* f, const char* path);
 static void join_path(char* out, size_t out_sz, const char* base, const char* name);
 
 // Cursor blinking
@@ -215,38 +216,159 @@ static void gui_show_prompt_and_arm_input(void) {
 // Load filesystem from disk
 static void fs_load_from_disk(void) {
     char fs_file[1024];
-    snprintf(fs_file, sizeof(fs_file), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\filesystem.dat");
+    char program_dir[1024];
+    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    snprintf(fs_file, sizeof(fs_file), "%s\\data\\filesystem.dat", program_dir);
     
-    FILE* f = fopen(fs_file, "rb");
+    // Ensure the data directory exists
+    char data_dir[1024];
+    snprintf(data_dir, sizeof(data_dir), "%s\\data", program_dir);
+    CreateDirectoryA(data_dir, NULL);
+    
+    FILE* f = fopen(fs_file, "r");
     if (!f) {
         gui_println("No saved filesystem found, creating new one...");
         return;
     }
     
-    // Simple loading: just check if file exists
-    fclose(f);
     gui_println("Loading saved filesystem...");
     
-    // For now, we'll just create the basic structure
-    // In a full implementation, you'd deserialize the filesystem here
+    char line[1024];
+    Directory* current_dir = g_root;
+    
+    while (fgets(line, sizeof(line), f)) {
+        // Remove newline
+        line[strcspn(line, "\r\n")] = 0;
+        
+        if (strlen(line) == 0) continue;
+        
+        if (strncmp(line, "DIR:", 4) == 0) {
+            // Directory entry: DIR:path
+            char* path = line + 4;
+            if (strcmp(path, "C:\\PROFILES") == 0) {
+                current_dir = g_root;
+            } else {
+                // Find the directory in the filesystem
+                current_dir = g_root;
+                char* token = strtok(path + 3, "\\"); // Skip "C:"
+                while (token && current_dir) {
+                    if (strcmp(token, "PROFILES") == 0) {
+                        // Skip PROFILES, it's the root
+                    } else {
+                        current_dir = fs_find_child(current_dir, token);
+                    }
+                    token = strtok(NULL, "\\");
+                }
+            }
+        } else if (strncmp(line, "FILE:", 5) == 0) {
+            // File entry: FILE:name|content
+            char* file_info = line + 5;
+            char* pipe_pos = strchr(file_info, '|');
+            if (pipe_pos) {
+                *pipe_pos = 0;
+                char* filename = file_info;
+                char* content = pipe_pos + 1;
+                
+                if (current_dir) {
+                    File* f = fs_create_file(filename);
+                    if (f) {
+                        // Unescape content
+                        char* src = content;
+                        char* dst = f->content;
+                        while (*src && (dst - f->content) < sizeof(f->content) - 1) {
+                            if (*src == '\\' && *(src + 1) == '|') {
+                                *dst++ = '|';
+                                src += 2;
+                            } else if (*src == '\\' && *(src + 1) == 'n') {
+                                *dst++ = '\n';
+                                src += 2;
+                            } else if (*src == '\\' && *(src + 1) == 'r') {
+                                *dst++ = '\r';
+                                src += 2;
+                            } else {
+                                *dst++ = *src++;
+                            }
+                        }
+                        *dst = '\0';
+                        fs_add_file(current_dir, f);
+                    }
+                }
+            }
+        }
+    }
+    
+    fclose(f);
+    gui_println("Filesystem loaded successfully");
 }
 
 // Save filesystem to disk
 static void fs_save_to_disk(void) {
     char fs_file[1024];
-    snprintf(fs_file, sizeof(fs_file), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\filesystem.dat");
+    char program_dir[1024];
+    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    snprintf(fs_file, sizeof(fs_file), "%s\\data\\filesystem.dat", program_dir);
     
-    FILE* f = fopen(fs_file, "wb");
+    // Ensure the data directory exists
+    char data_dir[1024];
+    snprintf(data_dir, sizeof(data_dir), "%s\\data", program_dir);
+    CreateDirectoryA(data_dir, NULL);
+    
+    FILE* f = fopen(fs_file, "w");
     if (!f) {
         gui_println("Failed to save filesystem");
         return;
     }
     
-    // Simple saving: just create a marker file
-    fprintf(f, "Filesystem saved at %s\n", fs_file);
-    fclose(f);
+    // Save the filesystem structure
+    save_filesystem_recursive(g_root, f, "C:\\PROFILES");
     
+    fclose(f);
     gui_println("Filesystem saved successfully");
+}
+
+// Helper function to recursively save filesystem
+static void save_filesystem_recursive(Directory* dir, FILE* f, const char* path) {
+    if (!dir || !f) return;
+    
+    // Save current directory
+    fprintf(f, "DIR:%s\n", path);
+    
+    // Save files in this directory
+    for (int i = 0; i < dir->file_count; ++i) {
+        if (dir->files[i]) {
+            // Escape pipe characters in content
+            char escaped_content[2048];
+            char* src = dir->files[i]->content;
+            char* dst = escaped_content;
+            while (*src && (dst - escaped_content) < sizeof(escaped_content) - 1) {
+                if (*src == '|') {
+                    *dst++ = '\\';
+                    *dst++ = '|';
+                } else if (*src == '\n') {
+                    *dst++ = '\\';
+                    *dst++ = 'n';
+                } else if (*src == '\r') {
+                    *dst++ = '\\';
+                    *dst++ = 'r';
+                } else {
+                    *dst++ = *src;
+                }
+                src++;
+            }
+            *dst = '\0';
+            
+            fprintf(f, "FILE:%s|%s\n", dir->files[i]->name, escaped_content);
+        }
+    }
+    
+    // Recursively save subdirectories
+    for (int i = 0; i < dir->child_count; ++i) {
+        if (dir->children[i]) {
+            char new_path[1024];
+            snprintf(new_path, sizeof(new_path), "%s\\%s", path, dir->children[i]->name);
+            save_filesystem_recursive(dir->children[i], f, new_path);
+        }
+    }
 }
 
 // ---------------- Command processing ----------------
@@ -343,20 +465,33 @@ static void cmd_mkdir(const char* name) {
     if (d) {
         fs_add_child(g_cwd, d);
         
-        // Also create the directory on the real file system
-        char real_path[1024];
-        snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s\\%s", g_currentUser, name);
+        // Get the real path based on current directory
+        char virtual_path[1024];
+        fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
         
-        // Create the directory on disk
-        char mkdir_cmd[1024];
-        snprintf(mkdir_cmd, sizeof(mkdir_cmd), "mkdir \"%s\" 2>nul", real_path);
-        system(mkdir_cmd);
+        // Get program directory
+        char program_dir[1024];
+        GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+        
+        // Convert virtual path to real path
+        char real_path[1024];
+        const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
+        if (profiles_pos) {
+            snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+        } else {
+            snprintf(real_path, sizeof(real_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
+        }
+        
+        // Add the directory name to the path
+        char full_real_path[1024];
+        join_path(full_real_path, sizeof(full_real_path), real_path, name);
+        
+        // Create the directory on disk (hidden)
+        CreateDirectoryA(full_real_path, NULL);
         
         char msg[256];
         snprintf(msg, sizeof(msg), "Directory '%s' created successfully.", name);
         gui_println(msg);
-        gui_println("Real path:");
-        gui_println(real_path);
         
         // Auto-save filesystem
         fs_save_to_disk();
@@ -382,25 +517,24 @@ static void cmd_touch(const char* name) {
         char real_path[1024];
         const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
         if (profiles_pos) {
-            snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE%s", profiles_pos);
+            snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
         } else {
-            snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", g_currentUser);
+            snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
         }
         
         // Add the filename to the path
         char full_real_path[1024];
         join_path(full_real_path, sizeof(full_real_path), real_path, name);
         
-        // Create empty file on disk
-        char touch_cmd[1024];
-        snprintf(touch_cmd, sizeof(touch_cmd), "echo. > \"%s\" 2>nul", full_real_path);
-        system(touch_cmd);
+        // Create empty file on disk (hidden)
+        HANDLE hFile = CreateFileA(full_real_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            CloseHandle(hFile);
+        }
         
         char msg[256];
         snprintf(msg, sizeof(msg), "File '%s' created successfully.", name);
         gui_println(msg);
-        gui_println("Real path:");
-        gui_println(full_real_path);
         
         // Auto-save filesystem
         fs_save_to_disk();
@@ -433,9 +567,9 @@ static void cmd_write(const char* args) {
     char real_path[1024];
     const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
     if (profiles_pos) {
-        snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE%s", profiles_pos);
+        snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
     } else {
-        snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", g_currentUser);
+        snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
     }
     
     // Add the filename to the path
@@ -451,8 +585,6 @@ static void cmd_write(const char* args) {
     }
     
     gui_println("File written successfully.");
-    gui_println("Real path:");
-    gui_println(full_real_path);
 }
 
 static void cmd_append(const char* args) {
@@ -474,9 +606,9 @@ static void cmd_append(const char* args) {
     char real_path[1024];
     const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
     if (profiles_pos) {
-        snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE%s", profiles_pos);
+        snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
     } else {
-        snprintf(real_path, sizeof(real_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", g_currentUser);
+        snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
     }
     
     // Add the filename to the path
@@ -493,8 +625,6 @@ static void cmd_append(const char* args) {
     }
     
     gui_println("Text appended successfully.");
-    gui_println("Real path:");
-    gui_println(full_real_path);
 }
 
 static void cmd_type(const char* name) {
@@ -731,44 +861,54 @@ static void execute_git_command(const char* git_args) {
     char current_path[1024];
     
     // Build the real path based on current virtual directory
+    // Get the current working directory of the program
+    char program_dir[1024];
+    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    
     if (g_cwd == g_home) {
         // We're in the user's home directory
-        snprintf(storage_path, sizeof(storage_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", g_currentUser);
+        snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
     } else {
         // We're in a subdirectory, build the full path
         fs_print_path(g_cwd, current_path, sizeof(current_path));
         
         // Convert virtual path to real path
         // Virtual path: C:\PROFILES\Public\folder\subfolder
-        // Real path: C:\Users\santi\OneDrive\Desktop\DIRECTORY_STORAGE\PROFILES\Public\folder\subfolder
+        // Real path: [program_dir]\data\PROFILES\Public\folder\subfolder
         
         // Find the position after "C:\PROFILES\"
         char* profiles_pos = strstr(current_path, "\\PROFILES\\");
         if (profiles_pos) {
             // Skip "C:\PROFILES\" and add the rest to the base path
             char* relative_path = profiles_pos + 10; // Skip "\PROFILES\"
-            snprintf(storage_path, sizeof(storage_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", relative_path);
+            snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, relative_path);
         } else {
-            // Fallback to home directory
-            snprintf(storage_path, sizeof(storage_path), "C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\%s", g_currentUser);
+            // Fallback to current user's directory
+            snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
         }
     }
     
-    // Create the directories if they don't exist
-    system("mkdir \"C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\" 2>nul");
-    system("mkdir \"C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\" 2>nul");
-    system("mkdir \"C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\Public\" 2>nul");
-    system("mkdir \"C:\\Users\\santi\\OneDrive\\Desktop\\DIRECTORY_STORAGE\\PROFILES\\Admin\" 2>nul");
+    // Create the directories if they don't exist (hidden)
+    CreateDirectoryA("data", NULL);
+    CreateDirectoryA("data\\PROFILES", NULL);
+    CreateDirectoryA("data\\PROFILES\\Public", NULL);
+    CreateDirectoryA("data\\PROFILES\\Admin", NULL);
+    
+    // Debug: Show the storage path
+    char debug_msg[1024];
+    snprintf(debug_msg, sizeof(debug_msg), "Git working directory: %s", storage_path);
+    gui_println(debug_msg);
     
     // Create a temporary batch file to capture output (in temp directory)
     char temp_bat[1024];
-    snprintf(temp_bat, sizeof(temp_bat), "%s\\..\\..\\temp_git_output.bat", storage_path);
+    snprintf(temp_bat, sizeof(temp_bat), "%s\\data\\temp_git_output.bat", program_dir);
     
     // Create the batch file content
     char batch_content[2048];
     snprintf(batch_content, sizeof(batch_content), 
         "@echo off\n"
         "cd /d \"%s\"\n"
+        "echo Current directory: %%CD%%\n"
         "%s\n"
         "echo.\n"
         "echo [GIT_EXIT_CODE] %%ERRORLEVEL%%\n", 
@@ -781,41 +921,86 @@ static void execute_git_command(const char* git_args) {
         WriteFile(hFile, batch_content, strlen(batch_content), &bytesWritten, NULL);
         CloseHandle(hFile);
         
-        // Execute the batch file and capture output
-        char full_command[2048];
-        snprintf(full_command, sizeof(full_command), "\"%s\" 2>&1", temp_bat);
+        // Execute the batch file and capture output using CreateProcess (hidden)
+        STARTUPINFOA si;
+        PROCESS_INFORMATION pi;
+        SECURITY_ATTRIBUTES sa;
+        HANDLE hReadPipe, hWritePipe;
         
-        FILE* pipe = _popen(full_command, "r");
-        if (pipe) {
-            char buffer[1024];
-            int exit_code = 0;
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE; // Hide the window
+        
+        ZeroMemory(&pi, sizeof(pi));
+        
+        // Create pipes for input/output
+        sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+        sa.bInheritHandle = TRUE;
+        sa.lpSecurityDescriptor = NULL;
+        
+        if (CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) {
+            si.hStdOutput = hWritePipe;
+            si.hStdError = hWritePipe;
+            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
             
-            while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-                // Remove newline
-                buffer[strcspn(buffer, "\r\n")] = 0;
+            // Create the process
+            if (CreateProcessA(NULL, temp_bat, NULL, NULL, TRUE, 0, NULL, NULL, &si, &pi)) {
+                CloseHandle(hWritePipe);
                 
-                // Check for exit code marker
-                if (strstr(buffer, "[GIT_EXIT_CODE]") != NULL) {
-                    sscanf(buffer, "[GIT_EXIT_CODE] %d", &exit_code);
-                    break;
+                // Read output
+                char buffer[1024];
+                DWORD bytesRead;
+                int exit_code = 0;
+                
+                while (ReadFile(hReadPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
+                    buffer[bytesRead] = '\0';
+                    
+                    // Process each line
+                    char* line = buffer;
+                    char* next_line;
+                    while ((next_line = strchr(line, '\n')) != NULL) {
+                        *next_line = '\0';
+                        
+                        // Remove carriage return if present
+                        char* cr = strchr(line, '\r');
+                        if (cr) *cr = '\0';
+                        
+                        // Check for exit code marker
+                        if (strstr(line, "[GIT_EXIT_CODE]") != NULL) {
+                            sscanf(line, "[GIT_EXIT_CODE] %d", &exit_code);
+                        } else if (strlen(line) > 0) {
+                            // Display the output line
+                            gui_println(line);
+                        }
+                        
+                        line = next_line + 1;
+                    }
                 }
                 
-                // Display the output line
-                gui_println(buffer);
-            }
-            
-            _pclose(pipe);
-            
-            if (exit_code == 0) {
-                gui_println("Git command completed successfully.");
+                // Wait for process to complete
+                WaitForSingleObject(pi.hProcess, INFINITE);
+                GetExitCodeProcess(pi.hProcess, (DWORD*)&exit_code);
+                
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                CloseHandle(hReadPipe);
+                
+                if (exit_code == 0) {
+                    gui_println("Git command completed successfully.");
+                } else {
+                    gui_println("Git command failed. Check your Git installation and try again.");
+                    char error_msg[256];
+                    snprintf(error_msg, sizeof(error_msg), "Exit code: %d", exit_code);
+                    gui_println(error_msg);
+                }
             } else {
-                gui_println("Git command failed. Check your Git installation and try again.");
-                char error_msg[256];
-                snprintf(error_msg, sizeof(error_msg), "Exit code: %d", exit_code);
-                gui_println(error_msg);
+                CloseHandle(hReadPipe);
+                CloseHandle(hWritePipe);
+                gui_println("Failed to execute Git command.");
             }
         } else {
-            gui_println("Failed to execute Git command.");
+            gui_println("Failed to create pipes for Git command.");
         }
         
         // Clean up the temporary batch file

@@ -1,0 +1,18 @@
+DIR:C:\PROFILES
+DIR:C:\PROFILES\PROFILES
+DIR:C:\PROFILES\PROFILES\Public
+FILE:README.txt|Welcome to Public Profile!\n\nThis is your personal workspace.\n\nCommon commands:\n- DIR: List files\n- CD: Change directory\n- MKDIR: Create folder\n- TOUCH: Create file\n- WRITE: Write to file\n- TYPE: Read file\n- USER: Switch users\n- WHOAMI: Show current user
+DIR:C:\PROFILES\PROFILES\Public\Documents
+DIR:C:\PROFILES\PROFILES\Public\Desktop
+DIR:C:\PROFILES\PROFILES\Public\Downloads
+DIR:C:\PROFILES\PROFILES\Admin
+FILE:README.txt|Welcome to Admin Profile!\n\nYou have administrative access.\n\nSystem directories:\n- System: System files and configurations\n- Documents: Admin documents\n- Desktop: Admin desktop files\n- Downloads: Downloaded files
+DIR:C:\PROFILES\PROFILES\Admin\Documents
+DIR:C:\PROFILES\PROFILES\Admin\Desktop
+DIR:C:\PROFILES\PROFILES\Admin\Downloads
+DIR:C:\PROFILES\PROFILES\Admin\System
+DIR:C:\PROFILES\PROFILES\Admin\REPO_FOLDER
+DIR:C:\PROFILES\PROFILES\Admin\REPO_FOLDER\TEST_REPO
+FILE:file.txt|"TESTING"
+DIR:C:\PROFILES\Windows
+DIR:C:\PROFILES\Temp

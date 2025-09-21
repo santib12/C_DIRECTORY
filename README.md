@@ -14,24 +14,51 @@ A native Windows GUI terminal application with an in-memory filesystem, built in
 - **Green Text** - Classic terminal appearance with green text on black background
 - **No Scroll Bars** - Clean interface without scroll bars
 
-## Build Instructions
+## Project Structure
 
-### Build with MinGW (Recommended):
-```bash
-gcc simple_gui_terminal.c -mwindows -lgdi32 -o terminal_final.exe
+```
+C_DIRECTORY/
+├── src/
+│   └── simple_gui_terminal.c    # Source code
+├── data/
+│   ├── filesystem.dat           # Virtual filesystem data
+│   └── PROFILES/                # User profiles
+│       ├── Public/              # Public user directory
+│       └── Admin/               # Admin user directory
+├── build/
+│   └── terminal.exe             # Compiled executable
+├── build.bat                    # Build script
+└── README.md                    # This file
 ```
 
-### Build with MSVC:
+## Build Instructions
+
+### Quick Build (Recommended):
 ```bash
-cl /nologo /O2 simple_gui_terminal.c /link /SUBSYSTEM:WINDOWS gdi32.lib /OUT:terminal_final.exe
+# Run the build script
+build.bat
+```
+
+### Manual Build:
+```bash
+# Using MinGW
+gcc src/simple_gui_terminal.c -mwindows -lgdi32 -o build/terminal.exe
+
+# Using MSVC
+cl src/simple_gui_terminal.c /link /SUBSYSTEM:WINDOWS gdi32.lib /OUT:build/terminal.exe
 ```
 
 ## Running the Application
 
-1. **Double-click** `terminal_final.exe` in Windows Explorer
+1. **Double-click** `build/terminal.exe` in Windows Explorer
 2. **Or run from Command Prompt/PowerShell:**
    ```cmd
-   terminal_final.exe
+   build/terminal.exe
+   ```
+3. **Or run from the project directory:**
+   ```cmd
+   cd C_DIRECTORY
+   build/terminal.exe
    ```
 
 ## Available Commands
