@@ -5,9 +5,11 @@ data/USERS/*/System/logs/
 data/USERS/santi_oryem/
 data/USERS/*/Settings/
 
-# Build artifacts
+# Build artifacts (keep terminal.exe for distribution)
 build/*.exe
+!build/terminal.exe
 *.exe
+!terminal.exe
 
 # IDE files
 .vscode/
