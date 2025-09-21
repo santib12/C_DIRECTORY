@@ -10,6 +10,14 @@
 #define MAX_FILES 100
 #define MAX_FILE_SIZE 2048
 
+// Forward declarations
+static void get_main_project_dir(char* buffer, size_t size);
+static void cmd_sync(void);
+static void cmd_writeln(const char* args);
+static void cmd_writecode(const char* args);
+static void cmd_editcode(const char* args);
+static void cmd_adduser(const char* args);
+
 // ---------------- In-memory filesystem ----------------
 typedef struct File {
     char name[MAX_NAME];
@@ -35,10 +43,19 @@ static void fs_load_from_disk(void);
 static void fs_save_to_disk(void);
 static void save_filesystem_recursive(Directory* dir, FILE* f, const char* path);
 static void join_path(char* out, size_t out_sz, const char* base, const char* name);
+static void load_users_from_realfilesystem(void);
+static void sync_all_directories(void);
+static void sync_directory_recursive(Directory* virtual_dir, const char* real_path);
 
 // Cursor blinking
 static UINT_PTR g_cursorTimer = 0;
 static BOOL g_cursorVisible = TRUE;
+
+// Edit mode variables
+static int g_editMode = 0;
+static File* g_editFile = NULL;
+static char g_editBuffer[2048];
+static int g_editBufferPos = 0;
 
 static Directory* fs_create_dir(const char* name) {
     Directory* d = (Directory*)malloc(sizeof(Directory));
@@ -85,7 +102,7 @@ static void fs_add_file(Directory* parent, File* file) {
 
 static void fs_print_path(Directory* dir, char* out, size_t out_sz) {
     if (dir == g_root) {
-        snprintf(out, out_sz, "C:\\");
+        snprintf(out, out_sz, "C:\\USERS");
         return;
     }
     char tmp[1024] = {0};
@@ -102,26 +119,24 @@ static void fs_print_path(Directory* dir, char* out, size_t out_sz) {
         }
         cur = cur->parent;
     }
-    snprintf(out, out_sz, "C:\\%s", tmp);
+    snprintf(out, out_sz, "C:\\USERS\\%s", tmp);
 }
 
 
 
 static void fs_init(void) {
     g_root = fs_create_dir("");
-    Directory* profiles = fs_create_dir("PROFILES");
     Directory* windows = fs_create_dir("Windows");
     Directory* temp = fs_create_dir("Temp");
-    fs_add_child(g_root, profiles);
     fs_add_child(g_root, windows);
     fs_add_child(g_root, temp);
     
-    // Create Public and Admin user profiles
+    // Create Public and Admin user profiles directly under root
     Directory* public_user = fs_create_dir("Public");
     Directory* admin_user = fs_create_dir("Admin");
     
-    fs_add_child(profiles, public_user);
-    fs_add_child(profiles, admin_user);
+    fs_add_child(g_root, public_user);
+    fs_add_child(g_root, admin_user);
     
     // Create some default directories for each user
     Directory* public_docs = fs_create_dir("Documents");
@@ -142,25 +157,20 @@ static void fs_init(void) {
     fs_add_child(admin_user, admin_downloads);
     fs_add_child(admin_user, admin_system);
     
-    // Add welcome files to each user
-    File* public_readme = fs_create_file("README.txt");
-    if (public_readme) {
-        strcpy(public_readme->content, "Welcome to Public Profile!\n\nThis is your personal workspace.\n\nCommon commands:\n- DIR: List files\n- CD: Change directory\n- MKDIR: Create folder\n- TOUCH: Create file\n- WRITE: Write to file\n- TYPE: Read file\n- USER: Switch users\n- WHOAMI: Show current user");
-        fs_add_file(public_user, public_readme);
-    }
-    
-    File* admin_readme = fs_create_file("README.txt");
-    if (admin_readme) {
-        strcpy(admin_readme->content, "Welcome to Admin Profile!\n\nYou have administrative access.\n\nSystem directories:\n- System: System files and configurations\n- Documents: Admin documents\n- Desktop: Admin desktop files\n- Downloads: Downloaded files");
-        fs_add_file(admin_user, admin_readme);
-    }
+    // README.txt files will be added by fs_load_from_disk() if needed
     
     // Set default user to Public
     g_home = public_user;
     g_cwd = g_home;
     
-    // Try to load existing filesystem
+    // Try to load existing filesystem first
     fs_load_from_disk();
+    
+    // Load any additional users from real filesystem
+    load_users_from_realfilesystem();
+    
+    // Comprehensive auto-sync on startup to load all directories and files from real filesystem
+    sync_all_directories();
 }
 
 // ---------------- GUI helpers ----------------
@@ -217,7 +227,7 @@ static void gui_show_prompt_and_arm_input(void) {
 static void fs_load_from_disk(void) {
     char fs_file[1024];
     char program_dir[1024];
-    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    get_main_project_dir(program_dir, sizeof(program_dir));
     snprintf(fs_file, sizeof(fs_file), "%s\\data\\filesystem.dat", program_dir);
     
     // Ensure the data directory exists
@@ -227,11 +237,30 @@ static void fs_load_from_disk(void) {
     
     FILE* f = fopen(fs_file, "r");
     if (!f) {
-        gui_println("No saved filesystem found, creating new one...");
+        // No saved filesystem found, using initialized filesystem
+        // Add README.txt files to users if they don't exist
+        Directory* public_user = fs_find_child(g_root, "Public");
+        Directory* admin_user = fs_find_child(g_root, "Admin");
+        
+        if (public_user && !fs_find_file(public_user, "README.txt")) {
+            File* public_readme = fs_create_file("README.txt");
+            if (public_readme) {
+                strcpy(public_readme->content, "Welcome to Public Profile!\n\nThis is your personal workspace.\n\nCommon commands:\n- DIR: List files\n- CD: Change directory\n- MKDIR: Create folder\n- TOUCH: Create file\n- WRITE: Write to file\n- TYPE: Read file\n- USER: Switch users\n- WHOAMI: Show current user");
+                fs_add_file(public_user, public_readme);
+            }
+        }
+        
+        if (admin_user && !fs_find_file(admin_user, "README.txt")) {
+            File* admin_readme = fs_create_file("README.txt");
+            if (admin_readme) {
+                strcpy(admin_readme->content, "Welcome to Admin Profile!\n\nYou have administrative access.\n\nSystem directories:\n- System: System files and configurations\n- Documents: Admin documents\n- Desktop: Admin desktop files\n- Downloads: Downloaded files");
+                fs_add_file(admin_user, admin_readme);
+            }
+        }
         return;
     }
     
-    gui_println("Loading saved filesystem...");
+    // Loading saved filesystem silently
     
     char line[1024];
     Directory* current_dir = g_root;
@@ -245,15 +274,15 @@ static void fs_load_from_disk(void) {
         if (strncmp(line, "DIR:", 4) == 0) {
             // Directory entry: DIR:path
             char* path = line + 4;
-            if (strcmp(path, "C:\\PROFILES") == 0) {
+            if (strcmp(path, "C:\\USERS") == 0) {
                 current_dir = g_root;
             } else {
                 // Find the directory in the filesystem
                 current_dir = g_root;
                 char* token = strtok(path + 3, "\\"); // Skip "C:"
                 while (token && current_dir) {
-                    if (strcmp(token, "PROFILES") == 0) {
-                        // Skip PROFILES, it's the root
+                    if (strcmp(token, "USERS") == 0) {
+                        // Skip USERS, it's the root
                     } else {
                         current_dir = fs_find_child(current_dir, token);
                     }
@@ -305,7 +334,7 @@ static void fs_load_from_disk(void) {
 static void fs_save_to_disk(void) {
     char fs_file[1024];
     char program_dir[1024];
-    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    get_main_project_dir(program_dir, sizeof(program_dir));
     snprintf(fs_file, sizeof(fs_file), "%s\\data\\filesystem.dat", program_dir);
     
     // Ensure the data directory exists
@@ -320,10 +349,193 @@ static void fs_save_to_disk(void) {
     }
     
     // Save the filesystem structure
-    save_filesystem_recursive(g_root, f, "C:\\PROFILES");
+    save_filesystem_recursive(g_root, f, "C:\\USERS");
     
     fclose(f);
-    gui_println("Filesystem saved successfully");
+    
+}
+
+static void load_users_from_realfilesystem(void) {
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char users_dir[1024];
+    snprintf(users_dir, sizeof(users_dir), "%s\\data\\USERS", program_dir);
+    
+    // Check if USERS directory exists
+    DWORD attrs = GetFileAttributesA(users_dir);
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        return; // No USERS directory
+    }
+    
+    // Find all subdirectories in USERS (these are user directories)
+    char search_path[1024];
+    snprintf(search_path, sizeof(search_path), "%s\\*", users_dir);
+    
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA(search_path, &findData);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    
+    do {
+        // Skip . and .. entries
+        if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+            continue;
+        }
+        
+        // Skip if not a directory
+        if (!(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            continue;
+        }
+        
+        // Check if this user already exists in virtual filesystem
+        Directory* existing_user = fs_find_child(g_root, findData.cFileName);
+        if (existing_user) {
+            continue; // User already exists
+        }
+        
+        // Create new user directory in virtual filesystem
+        Directory* new_user = fs_create_dir(findData.cFileName);
+        if (!new_user) {
+            continue;
+        }
+        
+        // Add user to root directory
+        fs_add_child(g_root, new_user);
+        
+        // Create README.txt for the new user
+        File* readme = fs_create_file("README.txt");
+        if (readme) {
+            snprintf(readme->content, sizeof(readme->content), 
+                "Welcome to %s's directory!\n\n"
+                "This is your personal workspace.\n"
+                "You can create files and folders here.\n\n"
+                "Available commands:\n"
+                "- MKDIR <name> - Create directory\n"
+                "- TOUCH <name> - Create file\n"
+                "- WRITE <file> <text> - Write to file\n"
+                "- EDITCODE <file> - Interactive code editor\n"
+                "- TYPE <file> - View file contents\n"
+                "- And many more! Type HELP for full list.", findData.cFileName);
+            
+            fs_add_file(new_user, readme);
+        }
+        
+    } while (FindNextFileA(hFind, &findData));
+    
+    FindClose(hFind);
+}
+
+static void sync_all_directories(void) {
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char users_dir[1024];
+    snprintf(users_dir, sizeof(users_dir), "%s\\data\\USERS", program_dir);
+    
+    // Check if USERS directory exists
+    DWORD attrs = GetFileAttributesA(users_dir);
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+        return; // No USERS directory
+    }
+    
+    // Sync each user directory
+    for (int i = 0; i < g_root->child_count; i++) {
+        Directory* user_dir = g_root->children[i];
+        if (!user_dir) continue;
+        
+        char user_real_path[1024];
+        snprintf(user_real_path, sizeof(user_real_path), "%s\\%s", users_dir, user_dir->name);
+        
+        // Check if the real user directory exists
+        DWORD user_attrs = GetFileAttributesA(user_real_path);
+        if (user_attrs != INVALID_FILE_ATTRIBUTES && (user_attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            // Sync this user's directory recursively
+            sync_directory_recursive(user_dir, user_real_path);
+        }
+    }
+    
+    // Show success message
+    gui_println("Successfully synced directories and files.");
+}
+
+static void sync_directory_recursive(Directory* virtual_dir, const char* real_path) {
+    if (!virtual_dir || !real_path) return;
+    
+    // Scan the real directory for files and subdirectories
+    char search_path[2048];
+    snprintf(search_path, sizeof(search_path), "%s\\*", real_path);
+    
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA(search_path, &findData);
+    
+    if (hFind == INVALID_HANDLE_VALUE) {
+        return;
+    }
+    
+    do {
+        // Skip . and .. entries
+        if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+            continue;
+        }
+        
+        // Check if it's a directory
+        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            // Check if this directory exists in virtual filesystem
+            Directory* existing = fs_find_child(virtual_dir, findData.cFileName);
+            if (!existing) {
+                // Create the directory in virtual filesystem
+                Directory* new_dir = fs_create_dir(findData.cFileName);
+                if (new_dir) {
+                    fs_add_child(virtual_dir, new_dir);
+                }
+                existing = new_dir;
+            }
+            
+            // Recursively sync this subdirectory
+            if (existing) {
+                char subdir_real_path[2048];
+                snprintf(subdir_real_path, sizeof(subdir_real_path), "%s\\%s", real_path, findData.cFileName);
+                sync_directory_recursive(existing, subdir_real_path);
+            }
+        } else {
+            // It's a file - check if this file exists in virtual filesystem
+            File* existing_file = fs_find_file(virtual_dir, findData.cFileName);
+            if (!existing_file) {
+                // Read the file content from real filesystem
+                char full_path[2048];
+                snprintf(full_path, sizeof(full_path), "%s\\%s", real_path, findData.cFileName);
+                
+                HANDLE hFile = CreateFileA(full_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (hFile != INVALID_HANDLE_VALUE) {
+                    DWORD fileSize = GetFileSize(hFile, NULL);
+                    if (fileSize > 0 && fileSize < 10240) { // Only read files smaller than 10KB
+                        char* content = (char*)malloc(fileSize + 1);
+                        if (content) {
+                            DWORD bytesRead;
+                            if (ReadFile(hFile, content, fileSize, &bytesRead, NULL)) {
+                                content[bytesRead] = '\0';
+                                
+                                // Create the file in virtual filesystem
+                                File* new_file = fs_create_file(findData.cFileName);
+                                if (new_file) {
+                                    strncpy(new_file->content, content, MAX_FILE_SIZE - 1);
+                                    new_file->content[MAX_FILE_SIZE - 1] = '\0';
+                                    fs_add_file(virtual_dir, new_file);
+                                }
+                            }
+                            free(content);
+                        }
+                    }
+                    CloseHandle(hFile);
+                }
+            }
+        }
+    } while (FindNextFileA(hFind, &findData));
+    
+    FindClose(hFind);
 }
 
 // Helper function to recursively save filesystem
@@ -377,17 +589,29 @@ static void cmd_help(void) {
     gui_println("  DIR, LS               List directory contents");
     gui_println("  CD <dir>|..|~         Change directory");
     gui_println("  MKDIR <name>          Create directory");
+    gui_println("  RMDIR <name>          Remove empty directory");
     gui_println("  TOUCH <name>          Create empty file");
+    gui_println("  DEL <name>            Delete file (permanent)");
+    gui_println("  SOFTDEL <name>        Soft delete (terminal only)");
+    gui_println("  SOFTDEL /F <name>     Force delete (both terminal and File Explorer)");
+    gui_println("  RESTORE <name>        Restore from trash");
+    gui_println("  TRASH                 Show trash contents");
+    gui_println("  EMPTYTRASH            Permanently delete trash");
     gui_println("  TYPE <file>           Show file contents");
     gui_println("  WRITE <file> <text>   Replace file content with text");
+    gui_println("  WRITELN <file> <text> Write text with line breaks (use \\n)");
+    gui_println("  WRITECODE <file> <code> Write code with formatting (use \\n, \\t)");
+    gui_println("  EDITCODE <file> Interactive code editor (Ctrl+S to save, Ctrl+C to cancel)");
     gui_println("  APPEND <file> <text>  Append text to file");
     gui_println("  ECHO <text>           Print text");
     gui_println("  PWD                   Print working directory");
     gui_println("  SAVEFS <path>         Save entire filesystem to disk");
     gui_println("  USER <name>           Switch to user");
+    gui_println("  ADDUSER <name>        Create new user");
     gui_println("  WHOAMI                Show current user");
     gui_println("  USERS                 List all users");
     gui_println("  FILEVIEW              Show files in filesystem tree structure");
+    gui_println("  SYNC                  Sync virtual filesystem with real filesystem");
     gui_println("  SAVE                  Save filesystem to disk");
     gui_println("  CLS, CLEAR            Clear screen");
     gui_println("  EXIT                  Quit");
@@ -431,6 +655,7 @@ static void cmd_pwd(void) {
     gui_println(path);
 }
 
+
 static void cmd_dir(void) {
     char head[1024];
     fs_print_path(g_cwd, head, sizeof(head));
@@ -471,15 +696,15 @@ static void cmd_mkdir(const char* name) {
         
         // Get program directory
         char program_dir[1024];
-        GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+        get_main_project_dir(program_dir, sizeof(program_dir));
         
         // Convert virtual path to real path
         char real_path[1024];
-        const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
+        const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
         if (profiles_pos) {
             snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
         } else {
-            snprintf(real_path, sizeof(real_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
+            snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
         }
         
         // Add the directory name to the path
@@ -513,23 +738,30 @@ static void cmd_touch(const char* name) {
         char virtual_path[1024];
         fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
         
-        // Convert virtual path to real path
+        // Convert virtual path to real path using absolute paths
+        char program_dir[1024];
+        get_main_project_dir(program_dir, sizeof(program_dir));
+        
         char real_path[1024];
-        const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
+        const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
         if (profiles_pos) {
-            snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
+            snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
         } else {
-            snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
+            snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
         }
         
         // Add the filename to the path
         char full_real_path[1024];
         join_path(full_real_path, sizeof(full_real_path), real_path, name);
         
+        
         // Create empty file on disk (hidden)
         HANDLE hFile = CreateFileA(full_real_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (hFile != INVALID_HANDLE_VALUE) {
             CloseHandle(hFile);
+            gui_println("File created successfully in real filesystem.");
+        } else {
+            gui_println("Failed to create file in real filesystem.");
         }
         
         char msg[256];
@@ -539,6 +771,424 @@ static void cmd_touch(const char* name) {
         // Auto-save filesystem
         fs_save_to_disk();
     }
+}
+
+static void cmd_del(const char* name) {
+    if (!name || !*name) {
+        gui_println("Usage: DEL <filename>");
+        gui_println("Example: DEL myfile.txt");
+        return;
+    }
+    
+    // Check if file exists in virtual filesystem
+    File* f = fs_find_file(g_cwd, name);
+    if (!f) {
+        gui_println("File not found.");
+        return;
+    }
+    
+    // Remove file from virtual filesystem
+    for (int i = 0; i < g_cwd->file_count; ++i) {
+        if (strcmp(g_cwd->files[i]->name, name) == 0) {
+            free(g_cwd->files[i]);
+            // Shift remaining files
+            for (int j = i; j < g_cwd->file_count - 1; ++j) {
+                g_cwd->files[j] = g_cwd->files[j + 1];
+            }
+            g_cwd->file_count--;
+            break;
+        }
+    }
+    
+    // Remove file from real filesystem
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char virtual_path[1024];
+    fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+    
+    char real_path[1024];
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+    if (profiles_pos) {
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+    } else {
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    }
+    
+    char full_real_path[1024];
+    join_path(full_real_path, sizeof(full_real_path), real_path, name);
+    
+    // Delete the file from real filesystem
+    BOOL result = DeleteFileA(full_real_path);
+    if (result) {
+        gui_println("File deleted from both terminal and File Explorer.");
+    } else {
+        DWORD error = GetLastError();
+        char error_msg[512];
+        snprintf(error_msg, sizeof(error_msg), "Failed to delete file from File Explorer. Error: %lu", error);
+        gui_println(error_msg);
+    }
+    
+    // Auto-save filesystem
+    fs_save_to_disk();
+    gui_println("File deleted successfully.");
+}
+
+static void cmd_rmdir(const char* name) {
+    if (!name || !*name) {
+        gui_println("Usage: RMDIR <foldername>");
+        gui_println("Example: RMDIR myfolder");
+        return;
+    }
+    
+    // Check if directory exists in virtual filesystem
+    Directory* d = fs_find_child(g_cwd, name);
+    if (!d) {
+        gui_println("Directory not found.");
+        return;
+    }
+    
+    // Check if directory is empty
+    if (d->child_count > 0 || d->file_count > 0) {
+        gui_println("Directory is not empty. Use RMDIR /S to force delete.");
+        return;
+    }
+    
+    // Remove directory from virtual filesystem
+    for (int i = 0; i < g_cwd->child_count; ++i) {
+        if (strcmp(g_cwd->children[i]->name, name) == 0) {
+            free(g_cwd->children[i]);
+            // Shift remaining directories
+            for (int j = i; j < g_cwd->child_count - 1; ++j) {
+                g_cwd->children[j] = g_cwd->children[j + 1];
+            }
+            g_cwd->child_count--;
+            break;
+        }
+    }
+    
+    // Remove directory from real filesystem
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char virtual_path[1024];
+    fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+    
+    char real_path[1024];
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+    if (profiles_pos) {
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+    } else {
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    }
+    
+    char full_real_path[1024];
+    join_path(full_real_path, sizeof(full_real_path), real_path, name);
+    
+    // Delete the directory from real filesystem
+    BOOL result = RemoveDirectoryA(full_real_path);
+    if (result) {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Directory deleted from both terminal and File Explorer: %s", full_real_path);
+        gui_println(msg);
+    } else {
+        char msg[512];
+        snprintf(msg, sizeof(msg), "Directory deleted from terminal. Real directory deletion failed: %s", full_real_path);
+        gui_println(msg);
+    }
+    
+    // Auto-save filesystem
+    fs_save_to_disk();
+    gui_println("Directory deleted successfully.");
+}
+
+// Trash system for soft deletes
+typedef struct TrashItem {
+    char name[256];
+    char path[1024];
+    int is_directory;
+    char content[4096]; // For files
+    struct TrashItem* next;
+} TrashItem;
+
+static TrashItem* g_trash = NULL;
+
+static void add_to_trash(const char* name, const char* path, int is_directory, const char* content) {
+    TrashItem* item = (TrashItem*)malloc(sizeof(TrashItem));
+    if (!item) return;
+    
+    strncpy(item->name, name, sizeof(item->name) - 1);
+    item->name[sizeof(item->name) - 1] = '\0';
+    
+    strncpy(item->path, path, sizeof(item->path) - 1);
+    item->path[sizeof(item->path) - 1] = '\0';
+    
+    item->is_directory = is_directory;
+    
+    if (content) {
+        strncpy(item->content, content, sizeof(item->content) - 1);
+        item->content[sizeof(item->content) - 1] = '\0';
+    } else {
+        item->content[0] = '\0';
+    }
+    
+    item->next = g_trash;
+    g_trash = item;
+}
+
+static void cmd_softdel(const char* name) {
+    if (!name || !*name) {
+        gui_println("Usage: SOFTDEL <filename> or SOFTDEL <foldername>");
+        gui_println("         SOFTDEL /S <filename> (soft delete - terminal only)");
+        gui_println("Example: SOFTDEL myfile.txt (deletes from both terminal and File Explorer)");
+        gui_println("         SOFTDEL /S myfile.txt (soft delete - terminal only)");
+        gui_println("Note: Default behavior deletes from both terminal and File Explorer");
+        return;
+    }
+    
+    // Check for soft delete flag
+    int soft_delete_only = 0;
+    if (strncmp(name, "/S ", 3) == 0) {
+        soft_delete_only = 1;
+        name += 3; // Skip "/S "
+        // Skip leading spaces
+        while (*name && isspace((unsigned char)*name)) name++;
+    }
+    
+    // Check if it's a file
+    File* f = fs_find_file(g_cwd, name);
+    if (f) {
+        // Get current path for trash
+        char current_path[1024];
+        fs_print_path(g_cwd, current_path, sizeof(current_path));
+        
+        if (soft_delete_only) {
+            // Add to trash (soft delete - terminal only)
+            add_to_trash(name, current_path, 0, f->content);
+        } else {
+            // Delete from real filesystem
+            char program_dir[1024];
+            get_main_project_dir(program_dir, sizeof(program_dir));
+            
+            char virtual_path[1024];
+            fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+            
+            char real_path[1024];
+            const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+            if (profiles_pos) {
+                snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+            } else {
+                snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+            }
+            
+            char full_real_path[1024];
+            join_path(full_real_path, sizeof(full_real_path), real_path, name);
+            
+            // Delete the file from real filesystem
+            BOOL delete_result = DeleteFileA(full_real_path);
+            if (!delete_result) {
+                DWORD error = GetLastError();
+                char error_msg[512];
+                snprintf(error_msg, sizeof(error_msg), "Warning: Failed to delete file from File Explorer. Error: %lu", error);
+                gui_println(error_msg);
+            }
+        }
+        
+        // Remove file from virtual filesystem
+        for (int i = 0; i < g_cwd->file_count; ++i) {
+            if (strcmp(g_cwd->files[i]->name, name) == 0) {
+                free(g_cwd->files[i]);
+                // Shift remaining files
+                for (int j = i; j < g_cwd->file_count - 1; ++j) {
+                    g_cwd->files[j] = g_cwd->files[j + 1];
+                }
+                g_cwd->file_count--;
+                break;
+            }
+        }
+        
+        char msg[256];
+        if (soft_delete_only) {
+            snprintf(msg, sizeof(msg), "File '%s' moved to trash (soft delete - terminal only).", name);
+        } else {
+            snprintf(msg, sizeof(msg), "File '%s' deleted from both terminal and File Explorer.", name);
+        }
+        gui_println(msg);
+        
+        // Auto-save filesystem
+        fs_save_to_disk();
+        return;
+    }
+    
+    // Check if it's a directory
+    Directory* d = fs_find_child(g_cwd, name);
+    if (d) {
+        // Get current path for trash
+        char current_path[1024];
+        fs_print_path(g_cwd, current_path, sizeof(current_path));
+        
+        if (soft_delete_only) {
+            // Add to trash (soft delete - terminal only)
+            add_to_trash(name, current_path, 1, NULL);
+        } else {
+            // Delete from real filesystem
+            char program_dir[1024];
+            get_main_project_dir(program_dir, sizeof(program_dir));
+            
+            char virtual_path[1024];
+            fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+            
+            char real_path[1024];
+            const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+            if (profiles_pos) {
+                snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+            } else {
+                snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+            }
+            
+            char full_real_path[1024];
+            join_path(full_real_path, sizeof(full_real_path), real_path, name);
+            
+            // Delete the directory from real filesystem
+            BOOL delete_result = RemoveDirectoryA(full_real_path);
+            if (!delete_result) {
+                DWORD error = GetLastError();
+                char error_msg[512];
+                snprintf(error_msg, sizeof(error_msg), "Warning: Failed to delete directory from File Explorer. Error: %lu", error);
+                gui_println(error_msg);
+            }
+        }
+        
+        // Remove directory from virtual filesystem
+        for (int i = 0; i < g_cwd->child_count; ++i) {
+            if (strcmp(g_cwd->children[i]->name, name) == 0) {
+                free(g_cwd->children[i]);
+                // Shift remaining directories
+                for (int j = i; j < g_cwd->child_count - 1; ++j) {
+                    g_cwd->children[j] = g_cwd->children[j + 1];
+                }
+                g_cwd->child_count--;
+                break;
+            }
+        }
+        
+        char msg[256];
+        if (soft_delete_only) {
+            snprintf(msg, sizeof(msg), "Directory '%s' moved to trash (soft delete - terminal only).", name);
+        } else {
+            snprintf(msg, sizeof(msg), "Directory '%s' deleted from both terminal and File Explorer.", name);
+        }
+        gui_println(msg);
+        
+        // Auto-save filesystem
+        fs_save_to_disk();
+        return;
+    }
+    
+    gui_println("File or directory not found.");
+}
+
+static void cmd_restore(const char* name) {
+    if (!name || !*name) {
+        gui_println("Usage: RESTORE <filename> or RESTORE <foldername>");
+        gui_println("Example: RESTORE myfile.txt");
+        gui_println("Use TRASH to see deleted items");
+        return;
+    }
+    
+    // Find item in trash
+    TrashItem* prev = NULL;
+    TrashItem* current = g_trash;
+    
+    while (current) {
+        if (strcmp(current->name, name) == 0) {
+            // Remove from trash
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                g_trash = current->next;
+            }
+            
+            if (current->is_directory) {
+                // Restore directory
+                Directory* new_dir = fs_create_dir(name);
+                if (new_dir) {
+                    fs_add_child(g_cwd, new_dir);
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "Directory '%s' restored from trash.", name);
+                    gui_println(msg);
+                }
+            } else {
+                // Restore file
+                File* new_file = fs_create_file(name);
+                if (new_file) {
+                    strncpy(new_file->content, current->content, sizeof(new_file->content) - 1);
+                    new_file->content[sizeof(new_file->content) - 1] = '\0';
+                    fs_add_file(g_cwd, new_file);
+                    char msg[256];
+                    snprintf(msg, sizeof(msg), "File '%s' restored from trash.", name);
+                    gui_println(msg);
+                }
+            }
+            
+            free(current);
+            fs_save_to_disk();
+            return;
+        }
+        prev = current;
+        current = current->next;
+    }
+    
+    gui_println("Item not found in trash.");
+}
+
+static void cmd_trash(void) {
+    gui_println("Trash contents:");
+    gui_println("===============");
+    
+    if (!g_trash) {
+        gui_println("Trash is empty.");
+        return;
+    }
+    
+    TrashItem* current = g_trash;
+    int count = 0;
+    
+    while (current) {
+        char type[16];
+        strcpy(type, current->is_directory ? "DIR" : "FILE");
+        
+        char msg[512];
+        snprintf(msg, sizeof(msg), "[%d] %s %s (from %s)", count + 1, type, current->name, current->path);
+        gui_println(msg);
+        
+        current = current->next;
+        count++;
+    }
+    
+    char count_msg[256];
+    snprintf(count_msg, sizeof(count_msg), "Total items in trash: %d", count);
+    gui_println(count_msg);
+}
+
+static void cmd_emptytrash(void) {
+    gui_println("Emptying trash...");
+    
+    TrashItem* current = g_trash;
+    int count = 0;
+    
+    while (current) {
+        TrashItem* next = current->next;
+        free(current);
+        current = next;
+        count++;
+    }
+    
+    g_trash = NULL;
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Trash emptied. %d items permanently deleted.", count);
+    gui_println(msg);
 }
 
 static void split_name_and_text(const char* arg, char* outName, size_t name_sz, const char** outText) {
@@ -563,13 +1213,16 @@ static void cmd_write(const char* args) {
     char virtual_path[1024];
     fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
     
-    // Convert virtual path to real path
+    // Convert virtual path to real path using absolute paths
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
     char real_path[1024];
-    const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
     if (profiles_pos) {
-        snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
     } else {
-        snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
     }
     
     // Add the filename to the path
@@ -587,6 +1240,284 @@ static void cmd_write(const char* args) {
     gui_println("File written successfully.");
 }
 
+static void cmd_writeln(const char* args) {
+    char name[MAX_NAME]; 
+    const char* text = NULL; 
+    split_name_and_text(args ? args : "", name, sizeof(name), &text);
+    
+    if (name[0] == '\0') { 
+        gui_println("Usage: WRITELN <file> <text>"); 
+        gui_println("Writes text to file with automatic line breaks."); 
+        return; 
+    }
+    
+    if (!text || !*text) { 
+        gui_println("Usage: WRITELN <file> <text>"); 
+        return; 
+    }
+    
+    // Create or find the file
+    File* f = fs_find_file(g_cwd, name);
+    if (!f) {
+        f = fs_create_file(name);
+        if (!f) {
+            gui_println("Failed to create file.");
+            return;
+        }
+        fs_add_file(g_cwd, f);
+    }
+    
+    // Process text to add line breaks
+    char processed_text[MAX_FILE_SIZE];
+    int j = 0;
+    for (int i = 0; text[i] && j < MAX_FILE_SIZE - 1; i++) {
+        if (text[i] == '\\' && text[i+1] == 'n') {
+            processed_text[j++] = '\r';
+            processed_text[j++] = '\n';
+            i++; // Skip the 'n'
+        } else {
+            processed_text[j++] = text[i];
+        }
+    }
+    processed_text[j] = '\0';
+    
+    // Copy processed text to file content
+    strncpy(f->content, processed_text, MAX_FILE_SIZE - 1);
+    f->content[MAX_FILE_SIZE - 1] = '\0';
+    
+    // Save to real filesystem
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char virtual_path[1024];
+    fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+    
+    char real_path[1024];
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+    if (profiles_pos) {
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+    } else {
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    }
+    
+    char full_real_path[1024];
+    join_path(full_real_path, sizeof(full_real_path), real_path, name);
+    
+    HANDLE hFile = CreateFileA(full_real_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD bytesWritten;
+        WriteFile(hFile, f->content, strlen(f->content), &bytesWritten, NULL);
+        CloseHandle(hFile);
+    }
+    
+    gui_println("File written with line breaks successfully.");
+}
+
+static void cmd_writecode(const char* args) {
+    char name[MAX_NAME]; 
+    const char* text = NULL; 
+    split_name_and_text(args ? args : "", name, sizeof(name), &text);
+    
+    if (name[0] == '\0') { 
+        gui_println("Usage: WRITECODE <file> <code>"); 
+        gui_println("Writes code to file with proper formatting and syntax highlighting."); 
+        return; 
+    }
+    
+    if (!text || !*text) { 
+        gui_println("Usage: WRITECODE <file> <code>"); 
+        return; 
+    }
+    
+    // Create or find the file
+    File* f = fs_create_file(name);
+    if (!f) {
+        gui_println("Failed to create file.");
+        return;
+    }
+    fs_add_file(g_cwd, f);
+    
+    // Process code text
+    char processed_text[MAX_FILE_SIZE];
+    int j = 0;
+    for (int i = 0; text[i] && j < MAX_FILE_SIZE - 1; i++) {
+        if (text[i] == '\\' && text[i+1] == 'n') {
+            processed_text[j++] = '\r';
+            processed_text[j++] = '\n';
+            i++; // Skip the 'n'
+        } else if (text[i] == '\\' && text[i+1] == 't') {
+            processed_text[j++] = '\t';
+            i++; // Skip the 't'
+        } else {
+            processed_text[j++] = text[i];
+        }
+    }
+    processed_text[j] = '\0';
+    
+    // Copy processed text to file content
+    strncpy(f->content, processed_text, MAX_FILE_SIZE - 1);
+    f->content[MAX_FILE_SIZE - 1] = '\0';
+    
+    // Save to real filesystem
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char virtual_path[1024];
+    fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+    
+    char real_path[1024];
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+    if (profiles_pos) {
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+    } else {
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    }
+    
+    char full_real_path[1024];
+    join_path(full_real_path, sizeof(full_real_path), real_path, name);
+    
+    HANDLE hFile = CreateFileA(full_real_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD bytesWritten;
+        WriteFile(hFile, f->content, strlen(f->content), &bytesWritten, NULL);
+        CloseHandle(hFile);
+    }
+    
+    gui_println("Code file written successfully.");
+}
+
+static void cmd_editcode(const char* args) {
+    char name[MAX_NAME];
+    if (sscanf(args, "%s", name) != 1) {
+        gui_println("Usage: EDITCODE <file>");
+        gui_println("Opens interactive code editor. Press Ctrl+S to save and exit.");
+        return;
+    }
+    
+    gui_println("=== INTERACTIVE CODE EDITOR ===");
+    char file_msg[256];
+    snprintf(file_msg, sizeof(file_msg), "File: %s", name);
+    gui_println(file_msg);
+    gui_println("Type your code line by line. Press Ctrl+S to save and exit.");
+    gui_println("Press Ctrl+C to cancel without saving.");
+    gui_println("----------------------------------------");
+    
+    // Create or find the file
+    File* f = fs_find_file(g_cwd, name);
+    if (!f) {
+        f = fs_create_file(name);
+        if (!f) {
+            gui_println("Failed to create file.");
+            return;
+        }
+        fs_add_file(g_cwd, f);
+    }
+    
+    // Clear existing content
+    f->content[0] = '\0';
+    
+    // Set up interactive editing mode
+    g_editMode = 1;
+    g_editFile = f;
+    g_editBuffer[0] = '\0';
+    g_editBufferPos = 0;
+    
+    gui_println("Ready to edit. Start typing...");
+}
+
+static void cmd_adduser(const char* username) {
+    if (!username || !*username) {
+        gui_println("Usage: ADDUSER <username>");
+        gui_println("Creates a new user with the specified name.");
+        gui_println("Example: ADDUSER Developer");
+        gui_println("         ADDUSER TestUser");
+        return;
+    }
+    
+    // Validate username (alphanumeric and underscore only)
+    for (const char* p = username; *p; p++) {
+        if (!isalnum(*p) && *p != '_') {
+            gui_println("Error: Username can only contain letters, numbers, and underscores.");
+            return;
+        }
+    }
+    
+    // Check if username already exists
+    Directory* existing_user = fs_find_child(g_root, username);
+    if (existing_user) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Error: User '%s' already exists.", username);
+        gui_println(msg);
+        return;
+    }
+    
+    // Create new user directory
+    Directory* new_user = fs_create_dir(username);
+    if (!new_user) {
+        gui_println("Error: Failed to create user directory.");
+        return;
+    }
+    
+    // Add user to root directory
+    fs_add_child(g_root, new_user);
+    
+    // Create real filesystem directory
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    char user_path[1024];
+    snprintf(user_path, sizeof(user_path), "%s\\data\\USERS\\%s", program_dir, username);
+    
+    // Create directory in real filesystem
+    if (!CreateDirectoryA(user_path, NULL)) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Warning: Could not create real directory for user '%s'.", username);
+            gui_println(msg);
+        }
+    }
+    
+    // Create README.txt for the new user
+    File* readme = fs_create_file("README.txt");
+    if (readme) {
+        snprintf(readme->content, sizeof(readme->content), 
+            "Welcome to %s's directory!\n\n"
+            "This is your personal workspace.\n"
+            "You can create files and folders here.\n\n"
+            "Available commands:\n"
+            "- MKDIR <name> - Create directory\n"
+            "- TOUCH <name> - Create file\n"
+            "- WRITE <file> <text> - Write to file\n"
+            "- EDITCODE <file> - Interactive code editor\n"
+            "- TYPE <file> - View file contents\n"
+            "- And many more! Type HELP for full list.", username);
+        
+        fs_add_file(new_user, readme);
+        
+        // Save README.txt to real filesystem
+        char readme_path[1024];
+        snprintf(readme_path, sizeof(readme_path), "%s\\README.txt", user_path);
+        
+        HANDLE hFile = CreateFileA(readme_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD bytesWritten;
+            WriteFile(hFile, readme->content, strlen(readme->content), &bytesWritten, NULL);
+            CloseHandle(hFile);
+        }
+    }
+    
+    // Save filesystem
+    fs_save_to_disk();
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "User '%s' created successfully!", username);
+    gui_println(msg);
+    gui_println("The new user starts with an empty directory and a README.txt file.");
+    gui_println("Use 'USER <username>' to switch to the new user.");
+}
+
+
 static void cmd_append(const char* args) {
     char name[MAX_NAME]; const char* text = NULL; split_name_and_text(args ? args : "", name, sizeof(name), &text);
     if (name[0] == '\0') { gui_println("Usage: APPEND <file> <text>"); return; }
@@ -602,13 +1533,16 @@ static void cmd_append(const char* args) {
     char virtual_path[1024];
     fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
     
-    // Convert virtual path to real path
+    // Convert virtual path to real path using absolute paths
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
     char real_path[1024];
-    const char* profiles_pos = strstr(virtual_path, "\\PROFILES\\");
+    const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
     if (profiles_pos) {
-        snprintf(real_path, sizeof(real_path), "data%s", profiles_pos);
+        snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
     } else {
-        snprintf(real_path, sizeof(real_path), "data\\PROFILES\\%s", g_currentUser);
+        snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
     }
     
     // Add the filename to the path
@@ -631,7 +1565,51 @@ static void cmd_type(const char* name) {
     if (!name || !*name) { gui_println("The system cannot find the file specified."); return; }
     File* f = fs_find_file(g_cwd, name);
     if (!f) { gui_println("The system cannot find the file specified."); return; }
-    gui_println(f->content);
+    
+    // Display file content with proper line break handling
+    const char* content = f->content;
+    const char* start = content;
+    
+    while (*content) {
+        if (*content == '\r' && *(content + 1) == '\n') {
+            // Windows line break - print up to this point
+            int len = content - start;
+            if (len > 0) {
+                char line[1024];
+                strncpy(line, start, len);
+                line[len] = '\0';
+                gui_println(line);
+            } else {
+                gui_println(""); // Empty line
+            }
+            content += 2; // Skip \r\n
+            start = content;
+        } else if (*content == '\n') {
+            // Unix line break - print up to this point
+            int len = content - start;
+            if (len > 0) {
+                char line[1024];
+                strncpy(line, start, len);
+                line[len] = '\0';
+                gui_println(line);
+            } else {
+                gui_println(""); // Empty line
+            }
+            content++; // Skip \n
+            start = content;
+        } else {
+            content++;
+        }
+    }
+    
+    // Print the last line if there's any content
+    if (content > start) {
+        int len = content - start;
+        char line[1024];
+        strncpy(line, start, len);
+        line[len] = '\0';
+        gui_println(line);
+    }
 }
 
 static void cmd_cd(const char* path) {
@@ -715,27 +1693,25 @@ static void cmd_savefs(const char* base) {
 static void cmd_user(const char* username) {
     if (!username || !*username) { 
         gui_println("Usage: USER <username>"); 
-        gui_println("Available users: Public, Admin");
+        gui_println("Available users:");
+        for (int i = 0; i < g_root->child_count; i++) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "  %s", g_root->children[i]->name);
+            gui_println(msg);
+        }
         return; 
     }
     
-    // Check if username is valid
-    if (strcmp(username, "Public") != 0 && strcmp(username, "Admin") != 0) {
-        gui_println("Invalid user. Available users: Public, Admin");
-        return;
-    }
-    
-    Directory* profiles = fs_find_child(g_root, "PROFILES");
-    if (!profiles) { 
-        gui_println("PROFILES directory not found"); 
-        return; 
-    }
-    
-    Directory* user_dir = fs_find_child(profiles, username);
+    Directory* user_dir = fs_find_child(g_root, username);
     if (!user_dir) { 
         char msg[256]; 
-        snprintf(msg, sizeof(msg), "User profile '%s' not found", username);
+        snprintf(msg, sizeof(msg), "Invalid user. Available users:");
         gui_println(msg);
+        for (int i = 0; i < g_root->child_count; i++) {
+            char user_msg[256];
+            snprintf(user_msg, sizeof(user_msg), "  %s", g_root->children[i]->name);
+            gui_println(user_msg);
+        }
         return; 
     }
     
@@ -757,10 +1733,13 @@ static void cmd_whoami(void) {
 
 static void cmd_users(void) {
     gui_println("Available users:");
-    gui_println("  Public");
-    gui_println("  Admin");
+    for (int i = 0; i < g_root->child_count; i++) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "  %s", g_root->children[i]->name);
+        gui_println(msg);
+    }
     gui_println("");
-    gui_println("User profiles are stored in: PROFILES/");
+    gui_println("User profiles are stored in: C:\\USERS\\");
 }
 
 // Filesystem tree display functions
@@ -851,68 +1830,210 @@ static void cmd_fileview(void) {
     print_filesystem_visualization(g_cwd, g_currentUser);
 }
 
+static void cmd_sync(void) {
+    // Syncing virtual filesystem with real filesystem silently
+    
+    // Get the main project directory
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    // Get the current working directory path in the real file system
+    char current_real_dir[2048];
+    char current_path[2048];
+    
+    // Build the real path based on current virtual directory
+    if (g_cwd == g_home) {
+        // We're in the user's home directory
+        snprintf(current_real_dir, sizeof(current_real_dir), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    } else {
+        // We're in a subdirectory, build the full path
+        fs_print_path(g_cwd, current_path, sizeof(current_path));
+        
+        // Find the position after "C:\\USERS\\"
+        char* profiles_pos = strstr(current_path, "\\USERS\\");
+        if (profiles_pos) {
+            // Skip "C:\USERS\" and add the rest to the base path
+            char* relative_path = profiles_pos + 7; // Skip "\USERS\"
+            snprintf(current_real_dir, sizeof(current_real_dir), "%s\\data\\USERS\\%s", program_dir, relative_path);
+        } else {
+            // Fallback to current user's directory
+            snprintf(current_real_dir, sizeof(current_real_dir), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+        }
+    }
+    
+    
+    // Scan the real directory and add missing folders to virtual filesystem
+    WIN32_FIND_DATAA findData;
+    char search_path[2048];
+    snprintf(search_path, sizeof(search_path), "%s\\*", current_real_dir);
+    
+    HANDLE hFind = FindFirstFileA(search_path, &findData);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            // Skip . and .. entries
+            if (strcmp(findData.cFileName, ".") == 0 || strcmp(findData.cFileName, "..") == 0) {
+                continue;
+            }
+            
+            // Check if it's a directory
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                // Check if this directory exists in virtual filesystem
+                Directory* existing = fs_find_child(g_cwd, findData.cFileName);
+                if (!existing) {
+                    // Create the directory in virtual filesystem
+                    Directory* new_dir = fs_create_dir(findData.cFileName);
+                    if (new_dir) {
+                        fs_add_child(g_cwd, new_dir);
+                        // Directory added silently
+                    }
+                }
+            } else {
+                // It's a file - check if this file exists in virtual filesystem
+                File* existing_file = fs_find_file(g_cwd, findData.cFileName);
+                if (!existing_file) {
+                    // Read the file content from real filesystem
+                    char full_path[2048];
+                    snprintf(full_path, sizeof(full_path), "%s\\%s", current_real_dir, findData.cFileName);
+                    
+                    HANDLE hFile = CreateFileA(full_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hFile != INVALID_HANDLE_VALUE) {
+                        DWORD fileSize = GetFileSize(hFile, NULL);
+                        if (fileSize > 0 && fileSize < 10240) { // Only read files smaller than 10KB
+                            char* content = (char*)malloc(fileSize + 1);
+                            if (content) {
+                                DWORD bytesRead;
+                                if (ReadFile(hFile, content, fileSize, &bytesRead, NULL)) {
+                                    content[bytesRead] = '\0';
+                                    
+                                    // Create the file in virtual filesystem
+                                    File* new_file = fs_create_file(findData.cFileName);
+                                    if (new_file) {
+                                        // Set the file content
+                                        strncpy(new_file->content, content, sizeof(new_file->content) - 1);
+                                        new_file->content[sizeof(new_file->content) - 1] = '\0';
+                                        
+                                        fs_add_file(g_cwd, new_file);
+                                        char msg[256];
+                                        snprintf(msg, sizeof(msg), "Added missing file: %s", findData.cFileName);
+                                        gui_println(msg);
+                                    }
+                                }
+                                free(content);
+                            }
+                        }
+                        CloseHandle(hFile);
+                    }
+                }
+            }
+        } while (FindNextFileA(hFind, &findData));
+        FindClose(hFind);
+    } else {
+        gui_println("No files found in real directory or directory doesn't exist.");
+    }
+    
+    // Save the updated filesystem
+    fs_save_to_disk();
+    gui_println("Sync completed successfully!");
+}
+
+// Helper function to get the main project directory (not the build directory)
+static void get_main_project_dir(char* buffer, size_t size) {
+    // Get the executable's full path
+    GetModuleFileNameA(NULL, buffer, (DWORD)size);
+    
+    // Find the last backslash and remove the filename
+    char* last_slash = strrchr(buffer, '\\');
+    if (last_slash) {
+        *last_slash = '\0';  // Remove the executable filename (now in build directory)
+    }
+    
+    // Now we're in the build directory, go up one level to the main project directory
+    last_slash = strrchr(buffer, '\\');
+    if (last_slash) {
+        *last_slash = '\0';  // Go up one level from build/ to main project directory
+    }
+}
+
 // Simple Git command implementations using system calls
 static void execute_git_command(const char* git_args) {
     char command[1024];
     snprintf(command, sizeof(command), "git %s", git_args);
     
     // Get the current working directory path in the real file system
-    char storage_path[1024];
-    char current_path[1024];
+    char storage_path[2048];
+    char current_path[2048];
     
     // Build the real path based on current virtual directory
-    // Get the current working directory of the program
+    // Get the main project directory (not the build directory)
     char program_dir[1024];
-    GetCurrentDirectoryA(sizeof(program_dir), program_dir);
+    get_main_project_dir(program_dir, sizeof(program_dir));
     
     if (g_cwd == g_home) {
         // We're in the user's home directory
-        snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
+        snprintf(storage_path, sizeof(storage_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
     } else {
         // We're in a subdirectory, build the full path
         fs_print_path(g_cwd, current_path, sizeof(current_path));
         
         // Convert virtual path to real path
-        // Virtual path: C:\PROFILES\Public\folder\subfolder
-        // Real path: [program_dir]\data\PROFILES\Public\folder\subfolder
+        // Virtual path: C:\USERS\Public\folder\subfolder
+        // Real path: [program_dir]\data\USERS\Public\folder\subfolder
         
-        // Find the position after "C:\PROFILES\"
-        char* profiles_pos = strstr(current_path, "\\PROFILES\\");
+        // Find the position after "C:\\USERS\\"
+        char* profiles_pos = strstr(current_path, "\\USERS\\");
         if (profiles_pos) {
-            // Skip "C:\PROFILES\" and add the rest to the base path
-            char* relative_path = profiles_pos + 10; // Skip "\PROFILES\"
-            snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, relative_path);
+            // Skip "C:\USERS\" and add the rest to the base path
+            char* relative_path = profiles_pos + 7; // Skip "\USERS\"
+            snprintf(storage_path, sizeof(storage_path), "%s\\data\\USERS\\%s", program_dir, relative_path);
         } else {
             // Fallback to current user's directory
-            snprintf(storage_path, sizeof(storage_path), "%s\\data\\PROFILES\\%s", program_dir, g_currentUser);
+            snprintf(storage_path, sizeof(storage_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
         }
     }
     
-    // Create the directories if they don't exist (hidden)
-    CreateDirectoryA("data", NULL);
-    CreateDirectoryA("data\\PROFILES", NULL);
-    CreateDirectoryA("data\\PROFILES\\Public", NULL);
-    CreateDirectoryA("data\\PROFILES\\Admin", NULL);
+    // Create the directories if they don't exist (hidden) - use absolute paths
+    char data_dir[1024];
+    snprintf(data_dir, sizeof(data_dir), "%s\\data", program_dir);
+    CreateDirectoryA(data_dir, NULL);
     
-    // Debug: Show the storage path
-    char debug_msg[1024];
-    snprintf(debug_msg, sizeof(debug_msg), "Git working directory: %s", storage_path);
-    gui_println(debug_msg);
+    char users_dir[1024];
+    snprintf(users_dir, sizeof(users_dir), "%s\\data\\USERS", program_dir);
+    CreateDirectoryA(users_dir, NULL);
+    
+    char public_dir[1024];
+    snprintf(public_dir, sizeof(public_dir), "%s\\data\\USERS\\Public", program_dir);
+    CreateDirectoryA(public_dir, NULL);
+    
+    char admin_dir[1024];
+    snprintf(admin_dir, sizeof(admin_dir), "%s\\data\\USERS\\Admin", program_dir);
+    CreateDirectoryA(admin_dir, NULL);
+    
+    // Create Admin's System folder in real filesystem
+    char admin_system_dir[1024];
+    snprintf(admin_system_dir, sizeof(admin_system_dir), "%s\\data\\USERS\\Admin\\System", program_dir);
+    CreateDirectoryA(admin_system_dir, NULL);
+    
+    
     
     // Create a temporary batch file to capture output (in temp directory)
     char temp_bat[1024];
     snprintf(temp_bat, sizeof(temp_bat), "%s\\data\\temp_git_output.bat", program_dir);
     
-    // Create the batch file content
-    char batch_content[2048];
+    // Create the batch file content with Git isolation using --git-dir and --work-tree
+    char batch_content[4096];
     snprintf(batch_content, sizeof(batch_content), 
         "@echo off\n"
         "cd /d \"%s\"\n"
-        "echo Current directory: %%CD%%\n"
-        "%s\n"
+        "if exist .git (\n"
+        "    set GIT_PAGER=cat\n"
+        "    set GIT_CONFIG_NOSYSTEM=1\n"
+        "    git --git-dir=\"%%CD%%\\.git\" --work-tree=\"%%CD%%\" %s\n"
+        ") else (\n"
+        "    echo No .git folder found. Use 'GIT INIT' to create a repository.\n"
+        ")\n"
         "echo.\n"
         "echo [GIT_EXIT_CODE] %%ERRORLEVEL%%\n", 
-        storage_path, command);
+        storage_path, git_args);
     
     // Write the batch file
     HANDLE hFile = CreateFileA(temp_bat, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -1044,9 +2165,55 @@ static void cmd_git_clone(const char* url) {
     gui_println("Cloning repository...");
     gui_println("Note: This will clone to your actual file system.");
     
-    char command[1024];
-    snprintf(command, sizeof(command), "clone %s", url);
-    execute_git_command(command);
+    // Get the main project directory
+    char program_dir[1024];
+    get_main_project_dir(program_dir, sizeof(program_dir));
+    
+    // Get the current working directory path in the real file system
+    char storage_path[2048];
+    char current_path[2048];
+    
+    // Always clone to the user's home directory for consistency
+    snprintf(storage_path, sizeof(storage_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+    
+    // Create a temporary batch file for git clone (no .git folder needed)
+    char temp_bat[1024];
+    snprintf(temp_bat, sizeof(temp_bat), "%s\\data\\temp_git_clone.bat", program_dir);
+    
+    // Create the batch file content for git clone
+    char batch_content[4096];
+    snprintf(batch_content, sizeof(batch_content), 
+        "@echo off\n"
+        "cd /d \"%s\"\n"
+        "git clone \"%s\"\n"
+        "echo.\n"
+        "echo [GIT_EXIT_CODE] %%ERRORLEVEL%%\n", 
+        storage_path, url);
+    
+    
+    // Write the batch file
+    HANDLE hFile = CreateFileA(temp_bat, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD bytesWritten;
+        WriteFile(hFile, batch_content, (DWORD)strlen(batch_content), &bytesWritten, NULL);
+        CloseHandle(hFile);
+        
+        // Execute the batch file
+        STARTUPINFOA si = {0};
+        PROCESS_INFORMATION pi = {0};
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        
+        if (CreateProcessA(temp_bat, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, INFINITE);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+        
+        // Clean up the batch file
+        DeleteFileA(temp_bat);
+    }
     
     // Extract repository name from URL for virtual filesystem
     char repo_name[256] = {0};
@@ -1073,6 +2240,9 @@ static void cmd_git_clone(const char* url) {
             fs_save_to_disk();
         }
     }
+    
+    // Auto-sync to update virtual filesystem with cloned repository
+    cmd_sync();
 }
 
 static void cmd_git_add(const char* file) {
@@ -1114,6 +2284,8 @@ static void cmd_git_status(void) {
 static void cmd_git_log(void) {
     gui_println("Git Log:");
     execute_git_command("log --oneline -10");
+    gui_println("Remote commits:");
+    execute_git_command("log --oneline origin/main -5");
 }
 
 static void cmd_git_diff(void) {
@@ -1132,6 +2304,17 @@ static void cmd_git_branch(const char* name) {
     }
 }
 
+static void cmd_git_remote(const char* args) {
+    if (!args || !*args) {
+        gui_println("Git Remotes:");
+        execute_git_command("remote -v");
+    } else {
+        char command[1024];
+        snprintf(command, sizeof(command), "remote %s", args);
+        execute_git_command(command);
+    }
+}
+
 static void cmd_git_checkout(const char* branch) {
     if (!branch || !*branch) {
         gui_println("Usage: GIT CHECKOUT <branch>");
@@ -1142,6 +2325,8 @@ static void cmd_git_checkout(const char* branch) {
     char command[1024];
     snprintf(command, sizeof(command), "checkout %s", branch);
     execute_git_command(command);
+    // Auto-sync to update virtual filesystem
+    cmd_sync();
 }
 
 static void cmd_git_merge(const char* branch) {
@@ -1154,29 +2339,34 @@ static void cmd_git_merge(const char* branch) {
     char command[1024];
     snprintf(command, sizeof(command), "merge %s", branch);
     execute_git_command(command);
+    // Auto-sync to update virtual filesystem
+    cmd_sync();
 }
 
 static void cmd_git_pull(void) {
     gui_println("Pulling changes from remote...");
+    gui_println("Checking remote configuration...");
+    execute_git_command("remote -v");
+    gui_println("Checking current branch...");
+    execute_git_command("branch");
+    gui_println("Checking status before pull...");
+    execute_git_command("status");
+    gui_println("Executing git pull...");
     execute_git_command("pull");
+    gui_println("Checking status after pull...");
+    execute_git_command("status");
+    // Auto-sync to update virtual filesystem
+    cmd_sync();
 }
 
 static void cmd_git_push(void) {
     gui_println("Pushing changes to remote...");
+    gui_println("Checking commits ahead of remote...");
+    execute_git_command("log --oneline origin/main..HEAD");
+    gui_println("Executing git push...");
     execute_git_command("push");
 }
 
-static void cmd_git_remote(const char* args) {
-    if (!args || !*args) {
-        gui_println("Usage: GIT REMOTE -v or GIT REMOTE ADD <name> <url>");
-        gui_println("Example: GIT REMOTE -v (list remotes)");
-        return;
-    }
-    
-    char command[1024];
-    snprintf(command, sizeof(command), "remote %s", args);
-    execute_git_command(command);
-}
 
 static void cmd_git_fetch(void) {
     gui_println("Fetching changes from remote...");
@@ -1193,6 +2383,36 @@ static void cmd_git_reset(const char* args) {
     char command[1024];
     snprintf(command, sizeof(command), "reset %s", args);
     execute_git_command(command);
+}
+
+static void cmd_git_rm(const char* file) {
+    if (!file || !*file) {
+        gui_println("Usage: GIT RM <file> or GIT RM -r <folder>");
+        gui_println("Example: GIT RM file.txt (remove file from Git)");
+        gui_println("Example: GIT RM -r folder/ (remove folder from Git)");
+        return;
+    }
+    
+    char command[1024];
+    snprintf(command, sizeof(command), "rm %s", file);
+    execute_git_command(command);
+    // Auto-sync to update virtual filesystem
+    cmd_sync();
+}
+
+static void cmd_git_clean(const char* args) {
+    if (!args || !*args) {
+        gui_println("Usage: GIT CLEAN -f (remove untracked files)");
+        gui_println("Usage: GIT CLEAN -fd (remove untracked files and directories)");
+        gui_println("Example: GIT CLEAN -fd (remove all untracked files and folders)");
+        return;
+    }
+    
+    char command[1024];
+    snprintf(command, sizeof(command), "clean %s", args);
+    execute_git_command(command);
+    // Auto-sync to update virtual filesystem
+    cmd_sync();
 }
 
 static void cmd_git_stash(const char* args) {
@@ -1236,7 +2456,7 @@ static void cmd_git_help(const char* command) {
         gui_println("Available Git commands:");
         gui_println("  INIT, CLONE, ADD, COMMIT, STATUS, LOG, DIFF");
         gui_println("  BRANCH, CHECKOUT, MERGE, PULL, PUSH, REMOTE");
-        gui_println("  FETCH, RESET, STASH, TAG, CONFIG, VERSION");
+        gui_println("  FETCH, RESET, RM, CLEAN, STASH, TAG, CONFIG, VERSION");
         gui_println("Type 'HELP' for detailed command descriptions.");
         return;
     }
@@ -1306,16 +2526,27 @@ static BOOL process_command(char* input) {
     else if (strcmp(input, "DIR") == 0 || strcmp(input, "LS") == 0) { cmd_dir(); }
     else if (strcmp(input, "MKDIR") == 0 || strcmp(input, "MD") == 0) { cmd_mkdir(arg); }
     else if (strcmp(input, "TOUCH") == 0) { cmd_touch(arg); }
+    else if (strcmp(input, "DEL") == 0 || strcmp(input, "DELETE") == 0) { cmd_del(arg); }
+    else if (strcmp(input, "RMDIR") == 0 || strcmp(input, "RD") == 0) { cmd_rmdir(arg); }
+    else if (strcmp(input, "SOFTDEL") == 0) { cmd_softdel(arg); }
+    else if (strcmp(input, "RESTORE") == 0) { cmd_restore(arg); }
+    else if (strcmp(input, "TRASH") == 0) { cmd_trash(); }
+    else if (strcmp(input, "EMPTYTRASH") == 0) { cmd_emptytrash(); }
     else if (strcmp(input, "TYPE") == 0 || strcmp(input, "CAT") == 0) { cmd_type(arg); }
     else if (strcmp(input, "WRITE") == 0) { cmd_write(arg); }
+    else if (strcmp(input, "WRITELN") == 0) { cmd_writeln(arg); }
+    else if (strcmp(input, "WRITECODE") == 0) { cmd_writecode(arg); }
+    else if (strcmp(input, "EDITCODE") == 0) { cmd_editcode(arg); }
     else if (strcmp(input, "APPEND") == 0) { cmd_append(arg); }
     else if (strcmp(input, "CD") == 0) { cmd_cd(arg); }
     else if (strcmp(input, "ECHO") == 0) { cmd_echo(arg); }
     else if (strcmp(input, "SAVEFS") == 0) { cmd_savefs(arg); }
     else if (strcmp(input, "USER") == 0) { cmd_user(arg); }
+    else if (strcmp(input, "ADDUSER") == 0) { cmd_adduser(arg); }
     else if (strcmp(input, "WHOAMI") == 0) { cmd_whoami(); }
     else if (strcmp(input, "USERS") == 0) { cmd_users(); }
     else if (strcmp(input, "FILEVIEW") == 0) { cmd_fileview(); }
+    else if (strcmp(input, "SYNC") == 0) { cmd_sync(); }
     else if (strcmp(input, "SAVE") == 0) { fs_save_to_disk(); }
     else if (strcmp(input, "GIT") == 0) {
         // Simple Git command handling
@@ -1360,13 +2591,15 @@ static BOOL process_command(char* input) {
         else if (strcmp(git_cmd, "LOG") == 0) { cmd_git_log(); }
         else if (strcmp(git_cmd, "DIFF") == 0) { cmd_git_diff(); }
         else if (strcmp(git_cmd, "BRANCH") == 0) { cmd_git_branch(git_args); }
+        else if (strcmp(git_cmd, "REMOTE") == 0) { cmd_git_remote(git_args); }
         else if (strcmp(git_cmd, "CHECKOUT") == 0) { cmd_git_checkout(git_args); }
         else if (strcmp(git_cmd, "MERGE") == 0) { cmd_git_merge(git_args); }
         else if (strcmp(git_cmd, "PULL") == 0) { cmd_git_pull(); }
         else if (strcmp(git_cmd, "PUSH") == 0) { cmd_git_push(); }
-        else if (strcmp(git_cmd, "REMOTE") == 0) { cmd_git_remote(git_args); }
         else if (strcmp(git_cmd, "FETCH") == 0) { cmd_git_fetch(); }
         else if (strcmp(git_cmd, "RESET") == 0) { cmd_git_reset(git_args); }
+        else if (strcmp(git_cmd, "RM") == 0) { cmd_git_rm(git_args); }
+        else if (strcmp(git_cmd, "CLEAN") == 0) { cmd_git_clean(git_args); }
         else if (strcmp(git_cmd, "STASH") == 0) { cmd_git_stash(git_args); }
         else if (strcmp(git_cmd, "TAG") == 0) { cmd_git_tag(git_args); }
         else if (strcmp(git_cmd, "CONFIG") == 0) { cmd_git_config(git_args); }
@@ -1471,6 +2704,72 @@ static LRESULT CALLBACK OutputEditProc(HWND hWnd, UINT msg, WPARAM wParam, LPARA
             return CallWindowProcA(g_OutputPrevProc, hWnd, msg, wParam, lParam);
         }
         case WM_CHAR: {
+            // Handle edit mode
+            if (g_editMode) {
+                if (wParam == 19) { // Ctrl+S (save)
+                    // Get the current text from the edit control
+                    int totalLen = GetWindowTextLengthA(hWnd);
+                    char* all = (char*)malloc((size_t)totalLen + 1);
+                    if (all) {
+                        GetWindowTextA(hWnd, all, totalLen + 1);
+                        
+                        // Find the content after the edit mode start
+                        char* editStart = strstr(all, "Ready to edit. Start typing...");
+                        if (editStart) {
+                            editStart = strstr(editStart, "\r\n");
+                            if (editStart) {
+                                editStart += 2; // Skip \r\n
+                                
+                                // Copy the edited content
+                                strncpy(g_editFile->content, editStart, MAX_FILE_SIZE - 1);
+                                g_editFile->content[MAX_FILE_SIZE - 1] = '\0';
+                                
+                                // Save to real filesystem
+                                char program_dir[1024];
+                                get_main_project_dir(program_dir, sizeof(program_dir));
+                                
+                                char virtual_path[1024];
+                                fs_print_path(g_cwd, virtual_path, sizeof(virtual_path));
+                                
+                                char real_path[1024];
+                                const char* profiles_pos = strstr(virtual_path, "\\USERS\\");
+                                if (profiles_pos) {
+                                    snprintf(real_path, sizeof(real_path), "%s\\data%s", program_dir, profiles_pos);
+                                } else {
+                                    snprintf(real_path, sizeof(real_path), "%s\\data\\USERS\\%s", program_dir, g_currentUser);
+                                }
+                                
+                                char full_real_path[1024];
+                                join_path(full_real_path, sizeof(full_real_path), real_path, g_editFile->name);
+                                
+                                HANDLE hFile = CreateFileA(full_real_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                                if (hFile != INVALID_HANDLE_VALUE) {
+                                    DWORD bytesWritten;
+                                    WriteFile(hFile, g_editFile->content, strlen(g_editFile->content), &bytesWritten, NULL);
+                                    CloseHandle(hFile);
+                                }
+                                
+                                gui_println("File saved successfully!");
+                            }
+                        }
+                        free(all);
+                    }
+                    
+                    g_editMode = 0;
+                    g_editFile = NULL;
+                    gui_show_prompt_and_arm_input();
+                    return 0;
+                } else if (wParam == 3) { // Ctrl+C (cancel)
+                    gui_println("Edit cancelled.");
+                    g_editMode = 0;
+                    g_editFile = NULL;
+                    gui_show_prompt_and_arm_input();
+                    return 0;
+                }
+                // For all other characters, let the normal display handle them
+            }
+            
+            // Normal command mode
             if (wParam == '\r' || wParam == '\n') {
                 int totalLen = GetWindowTextLengthA(hWnd);
                 int cmdLen = totalLen - g_inputStart;

@@ -1,0 +1,27 @@
+# Ignore user data and repositories
+data/USERS/*/TEST_REPO/
+data/USERS/*/repository/
+data/USERS/*/repo_*/
+data/USERS/*/cloned_*/
+
+# Keep user directories but ignore their content
+data/USERS/*/*
+!data/USERS/*/README.txt
+
+# Ignore build files
+build/
+*.exe
+*.o
+*.obj
+
+# Ignore temporary files
+temp_git_output.bat
+*.tmp
+*.log
+
+# Keep the data directory structure
+!data/
+!data/USERS/
+!data/USERS/Public/
+!data/USERS/Admin/
+!data/USERS/*/
