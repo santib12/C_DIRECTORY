@@ -1,0 +1,13 @@
+current_theme=classic
+cursor_blink_speed=500
+font_size=14
+font_name=Consolas
+auto_sync_enabled=1
+show_hidden_files=0
+default_editor=notepad
+max_history_size=100
+sound_enabled=1
+window_width=800
+window_height=600
+require_auth_for_admin=1
+session_timeout=30
