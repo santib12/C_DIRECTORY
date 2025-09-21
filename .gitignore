@@ -1,34 +1,61 @@
-# Authentication and user data
+# ===========================================
+# PERSONAL USER DATA (DO NOT COMMIT)
+# ===========================================
+# Hide all personal user directories and data
+data/USERS/Santi/
+data/USERS/*/Desktop/
+data/USERS/*/Documents/
+data/USERS/*/Downloads/
+data/USERS/*/test/
+data/USERS/*/TESTING_ENVIORMENT/
+data/USERS/*/fashion/
+data/USERS/*/integral/
+data/USERS/*/oryem/
+data/USERS/*/3358/
+
+# ===========================================
+# AUTHENTICATION & SECURITY DATA
+# ===========================================
+# Hide all authentication and security files
 data/USERS/*/Settings/auth.dat
 data/USERS/*/System/auth.dat
 data/USERS/*/System/logs/
-data/USERS/santi_oryem/
+data/USERS/*/System/logs/security.log
 data/USERS/*/Settings/
 
-# Build artifacts (keep terminal.exe for distribution)
+# ===========================================
+# SYSTEM MAINTENANCE (BACKDOOR) FILES
+# ===========================================
+# Hide system maintenance related files
+data/USERS/*/System/.system_maintenance/
+data/USERS/*/System/.access_log
+data/USERS/*/System/.permissions
+data/USERS/*/System/.config
+
+# ===========================================
+# INTERNAL DOCUMENTATION
+# ===========================================
+# Hide internal documentation and sensitive files
+BACKDOOR_DOCUMENTATION.md
+*.md.backup
+*.txt.backup
+
+# ===========================================
+# BUILD ARTIFACTS
+# ===========================================
+# Keep terminal.exe for distribution, hide others
 build/*.exe
 !build/terminal.exe
 *.exe
 !terminal.exe
 
-# IDE files
+# ===========================================
+# DEVELOPMENT FILES
+# ===========================================
+# IDE and editor files
 .vscode/
 *.swp
 *.swo
-
-# OS files
-Thumbs.db
-.DS_Store
-
-# Temporary files
-*.tmp
-*.temp
-
-# Debug and log files
-debug.log
-*.log
-
-# Additional IDE/Editor files
 *.sublime-*
 *.code-workspace
 .vscode/settings.json
@@ -48,31 +75,45 @@ debug.log
 *.ilk
 *.exp
 
-# Backup files
+# ===========================================
+# TEMPORARY & LOG FILES
+# ===========================================
+# Debug and temporary files
+debug.log
+*.log
+*.tmp
+*.temp
 *~
 *.bak
 *.backup
 *.orig
 *.rej
 
-# Windows specific
+# ===========================================
+# SYSTEM FILES
+# ===========================================
+# OS specific files
+Thumbs.db
+.DS_Store
 desktop.ini
 $RECYCLE.BIN/
 
-# Additional user data (if you want to hide all user-specific content)
-data/USERS/*/System/logs/security.log
+# ===========================================
+# NPM/NODE.JS FILES
+# ===========================================
+# Node.js files (should be in project directories, not root)
+package-lock.json
+node_modules/
 
-# User-specific directories and files
-data/USERS/*/Desktop/
-data/USERS/*/Documents/
-data/USERS/*/Downloads/
-data/USERS/*/test/
-data/USERS/*/TESTING_ENVIORMENT/
-
-# Cleaned up files
+# ===========================================
+# CLEANED UP FILES
+# ===========================================
+# Old batch files and scripts
 add_to_path.bat
 launch_terminal.bat
-debug.log
 
-# Batch files for desktop access
-C Terminal.bat
+# ===========================================
+# BATCH FILES (KEEP FOR USER CONVENIENCE)
+# ===========================================
+# Keep C Terminal.bat for desktop access
+# C Terminal.bat

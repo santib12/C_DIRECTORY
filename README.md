@@ -1,20 +1,22 @@
-# C File System Terminal
+# NEXUS TERMINAL
 
-A native Windows GUI terminal application with an in-memory filesystem, built in C using Win32 API. Features complete Git integration, file management, multi-user system, and a sophisticated trash system for safe file operations.
+A powerful native Windows GUI terminal application with an in-memory filesystem, built in C using Win32 API. Features complete Git integration, file management, multi-user system, C++/Python execution, npm/React development, command history, and a sophisticated trash system for safe file operations.
 
 ## Features
 
-- **Native GUI Window** - No console window, clean terminal interface
+- **Native GUI Window** - No console window, clean terminal interface with "NEXUS TERMINAL" branding
 - **In-Memory Filesystem** - Create directories and files within the terminal
 - **Advanced File Operations** - Write, append, read, and manage files with full persistence
 - **Multi-User System** - Create custom users and switch between them dynamically
 - **File Persistence** - Save entire filesystem to disk with automatic sync
-- **Blinking Cursor** - White vertical line cursor that blinks every 500ms
-- **Green Text** - Classic terminal appearance with green text on black background
-- **No Scroll Bars** - Clean interface without scroll bars
+- **Command History** - Navigate through previous commands with up/down arrow keys (like CMD/GitBash)
+- **C++ & Python Execution** - Compile and run C++ files, execute Python scripts directly
+- **npm/React Development** - Full npm package management and React development support
+- **Project Detection** - Automatically detects Node.js, React, Vue, Angular, C++, Python projects
+- **Case-Insensitive Commands** - Type commands in any case (uppercase, lowercase, mixed)
+- **Real Filesystem Sync** - Files appear in both terminal and File Explorer
 - **Complete Git Integration** - Full Git workflow with 25+ commands and SSH support
 - **Trash System** - Soft delete with restore capabilities
-- **Real Filesystem Sync** - Files appear in both terminal and File Explorer
 - **Interactive Code Editor** - Built-in code editor with syntax highlighting
 - **Advanced Text Writing** - Support for line breaks, code formatting, and multi-line text
 - **IDE Integration** - Open external editors (VS Code, Cursor, Notepad++, etc.) in new windows
