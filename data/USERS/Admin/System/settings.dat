@@ -1,4 +1,4 @@
-current_theme=classic
+current_theme=dark
 cursor_blink_speed=500
 font_size=14
 font_name=Consolas
@@ -11,3 +11,5 @@ window_width=800
 window_height=600
 require_auth_for_admin=1
 session_timeout=30
+custom_text_color=00000000
+custom_cursor_color=00000000

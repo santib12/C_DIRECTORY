@@ -61,3 +61,18 @@ $RECYCLE.BIN/
 
 # Additional user data (if you want to hide all user-specific content)
 data/USERS/*/System/logs/security.log
+
+# User-specific directories and files
+data/USERS/*/Desktop/
+data/USERS/*/Documents/
+data/USERS/*/Downloads/
+data/USERS/*/test/
+data/USERS/*/TESTING_ENVIORMENT/
+
+# Cleaned up files
+add_to_path.bat
+launch_terminal.bat
+debug.log
+
+# Batch files for desktop access
+C Terminal.bat
