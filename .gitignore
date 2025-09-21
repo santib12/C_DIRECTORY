@@ -1,27 +1,23 @@
-# Ignore user data and repositories
-data/USERS/*/TEST_REPO/
-data/USERS/*/repository/
-data/USERS/*/repo_*/
-data/USERS/*/cloned_*/
+# Authentication and user data
+data/USERS/*/Settings/auth.dat
+data/USERS/*/System/auth.dat
+data/USERS/*/System/logs/
+data/USERS/santi_oryem/
+data/USERS/*/Settings/
 
-# Keep user directories but ignore their content
-data/USERS/*/*
-!data/USERS/*/README.txt
-
-# Ignore build files
-build/
+# Build artifacts
+build/*.exe
 *.exe
-*.o
-*.obj
 
-# Ignore temporary files
-temp_git_output.bat
+# IDE files
+.vscode/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary files
 *.tmp
-*.log
-
-# Keep the data directory structure
-!data/
-!data/USERS/
-!data/USERS/Public/
-!data/USERS/Admin/
-!data/USERS/*/
+*.temp
