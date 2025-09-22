@@ -11,3 +11,5 @@ window_width=800
 window_height=600
 require_auth_for_admin=1
 session_timeout=30
+custom_text_color=00FF00FF
+custom_cursor_color=00000000
