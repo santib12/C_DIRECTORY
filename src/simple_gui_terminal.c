@@ -3014,27 +3014,32 @@ static void cmd_user(const char* username) {
         return;
     }
     
-    // Check if user has authentication credentials
-    BOOL user_has_auth = FALSE;
-    for (int i = 0; i < g_authCount; i++) {
-        if (strcmp(g_userAuth[i].username, username) == 0) {
-            user_has_auth = TRUE;
-            break;
-        }
-    }
-    
-    // If user has authentication credentials, require login
-    if (user_has_auth) {
-        if (!g_currentSession.is_authenticated || strcmp(g_currentSession.username, username) != 0) {
-            gui_println("User access requires authentication.");
-            gui_printf("Use: LOGIN %s <password>", username);
-            return;
-        }
+    // Special case: Public user doesn't require authentication
+    if (strcmp(username, "Public") == 0) {
+        // Allow Public user without authentication
     } else {
-        // User doesn't have authentication setup
-        gui_printf("User '%s' does not have authentication setup.", username);
-        gui_printf("Use: SETUP_AUTH %s <password>", username);
-        return; 
+        // Check if user has authentication credentials
+        BOOL user_has_auth = FALSE;
+        for (int i = 0; i < g_authCount; i++) {
+            if (strcmp(g_userAuth[i].username, username) == 0) {
+                user_has_auth = TRUE;
+                break;
+            }
+        }
+        
+        // If user has authentication credentials, require login
+        if (user_has_auth) {
+            if (!g_currentSession.is_authenticated || strcmp(g_currentSession.username, username) != 0) {
+                gui_println("User access requires authentication.");
+                gui_printf("Use: LOGIN %s <password>", username);
+                return;
+            }
+        } else {
+            // User doesn't have authentication setup
+            gui_printf("User '%s' does not have authentication setup.", username);
+            gui_printf("Use: SETUP_AUTH %s <password>", username);
+            return; 
+        }
     }
     
     strncpy(g_currentUser, username, sizeof(g_currentUser) - 1);

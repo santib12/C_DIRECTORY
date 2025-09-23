@@ -6,16 +6,25 @@ data/USERS/*/
 !data/USERS/Admin/
 !data/USERS/Public/
 
-# Hide specific user subdirectories for all users
+# Hide all user subdirectories and files except README.txt
 data/USERS/*/Desktop/
 data/USERS/*/Documents/
 data/USERS/*/Downloads/
+data/USERS/*/Settings/
+data/USERS/*/System/
 data/USERS/*/test/
 data/USERS/*/TESTING_ENVIORMENT/
 data/USERS/*/fashion/
 data/USERS/*/integral/
 data/USERS/*/oryem/
 data/USERS/*/3358/
+data/USERS/*/C++_FOLDER/
+data/USERS/*/repo-folder/
+data/USERS/*/repo_folder/
+
+# Allow only README.txt files for system users
+!data/USERS/Admin/README.txt
+!data/USERS/Public/README.txt
 
 # ===========================================
 # AUTHENTICATION & SECURITY DATA
@@ -53,6 +62,11 @@ build/*.exe
 !build/terminal.exe
 *.exe
 !terminal.exe
+
+# Hide all executables in user directories
+data/USERS/*/*.exe
+data/USERS/*/*/*.exe
+data/USERS/*/*/*/*.exe
 
 # ===========================================
 # DEVELOPMENT FILES
@@ -109,6 +123,17 @@ $RECYCLE.BIN/
 # Node.js files (should be in project directories, not root)
 package-lock.json
 node_modules/
+
+# Hide node_modules and build artifacts in user directories
+data/USERS/*/node_modules/
+data/USERS/*/*/node_modules/
+data/USERS/*/*/*/node_modules/
+data/USERS/*/dist/
+data/USERS/*/*/dist/
+data/USERS/*/*/*/dist/
+data/USERS/*/build/
+data/USERS/*/*/build/
+data/USERS/*/*/*/build/
 
 # ===========================================
 # CLEANED UP FILES
