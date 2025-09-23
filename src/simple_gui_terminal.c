@@ -385,10 +385,6 @@ static void fs_print_path(Directory* dir, char* out, size_t out_sz) {
 
 static void fs_init(void) {
     g_root = fs_create_dir("");
-    Directory* windows = fs_create_dir("Windows");
-    Directory* temp = fs_create_dir("Temp");
-    fs_add_child(g_root, windows);
-    fs_add_child(g_root, temp);
     
     // Create Public and Admin user profiles directly under root
     Directory* public_user = fs_create_dir("Public");
@@ -4983,11 +4979,11 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lPara
             // Apply theme after GUI is fully initialized
             apply_theme(g_settings.current_theme);
             
-            // Show title at top left, above command prompt
-            gui_println("NEXUS TERMINAL v5.0");
-            gui_println("");
+            // Show title on first line
+            gui_append("NEXUS TERMINAL v5.0");
+            gui_append("\r\n");
             
-            // Then show command prompt
+            // Show command prompt on second line, right below title
             gui_show_prompt_and_arm_input();
             
             // Force initial cursor draw

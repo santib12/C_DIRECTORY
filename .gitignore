@@ -1,8 +1,12 @@
 # ===========================================
 # PERSONAL USER DATA (DO NOT COMMIT)
 # ===========================================
-# Hide all personal user directories and data
-data/USERS/Santi/
+# Hide all user directories except hardcoded Admin and Public
+data/USERS/*/
+!data/USERS/Admin/
+!data/USERS/Public/
+
+# Hide specific user subdirectories for all users
 data/USERS/*/Desktop/
 data/USERS/*/Documents/
 data/USERS/*/Downloads/
@@ -19,6 +23,7 @@ data/USERS/*/3358/
 # Hide all authentication and security files
 data/USERS/*/Settings/auth.dat
 data/USERS/*/System/auth.dat
+data/USERS/*/System/settings.dat
 data/USERS/*/System/logs/
 data/USERS/*/System/logs/security.log
 data/USERS/*/Settings/
