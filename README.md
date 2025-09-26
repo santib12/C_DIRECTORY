@@ -7,7 +7,7 @@ A powerful native Windows GUI terminal application with an in-memory filesystem,
 - **Native GUI Window** - No console window, clean terminal interface with "NEXUS TERMINAL" branding
 - **In-Memory Filesystem** - Create directories and files within the terminal
 - **Advanced File Operations** - Write, append, read, and manage files with full persistence
-- **Multi-User System** - Create custom users and switch between them dynamically
+- **Multi-User System** - Built-in Admin and Public users plus dynamic user creation with secure authentication
 - **File Persistence** - Save entire filesystem to disk with automatic sync
 - **Command History** - Navigate through previous commands with up/down arrow keys (like CMD/GitBash)
 - **C++ & Python Execution** - Compile and run C++ files, execute Python scripts directly
@@ -37,16 +37,26 @@ C_DIRECTORY/
 │   ├── filesystem.dat           # Virtual filesystem data
 │   └── USERS/                   # User profiles directory
 │       ├── Public/              # Public user directory
-│       ├── Admin/               # Admin user directory
-│       │   └── System/          # Admin security & settings
-│       │       ├── auth.dat     # Encrypted authentication data
-│       │       ├── settings.dat # User settings
-│       │       ├── themes/      # Custom themes directory
-│       │       └── logs/        # Security audit logs
-│       └── [Custom Users]/      # Dynamically created users
+│       │   ├── Desktop/
+│       │   ├── Documents/
+│       │   ├── Downloads/
+│       │   ├── Settings/
+│       │   └── README.txt
+│       └── Admin/               # Admin user directory
+│           ├── Desktop/
+│           ├── Documents/
+│           ├── Downloads/
+│           ├── Settings/
+│           ├── System/          # Admin security & settings
+│           │   ├── auth.dat     # Encrypted authentication data
+│           │   ├── settings.dat # User settings
+│           │   ├── themes/      # Custom themes directory
+│           │   └── logs/        # Security audit logs
+│           └── README.txt
 ├── build/
 │   └── terminal.exe             # Compiled executable
 ├── build.bat                    # Build script
+├── C Terminal.bat               # Launch script
 └── README.md                    # This file
 ```
 
@@ -123,7 +133,9 @@ cl src/simple_gui_terminal.c /link /SUBSYSTEM:WINDOWS gdi32.lib /OUT:build/termi
 - `EMPTYTRASH` - Permanently delete all items in trash
 
 ### User Management Commands
-- `ADDUSER <name>` - Create new user with custom name
+- `ADDUSER <name>` - Create new dynamic user
+- `LOGIN <username> <password>` - Login to any user
+- `LOGOUT` - Logout current user
 - `USER <name>` - Switch to different user
 - `WHOAMI` - Show current user
 - `USERS` - List all available users
@@ -258,9 +270,14 @@ DIR
 
 ### Multi-User System
 ```bash
-# Create a new user
+# Create dynamic users
 ADDUSER Developer
 ADDUSER Tester
+
+# Login to users
+LOGIN Admin admin123
+LOGIN Developer dev123
+LOGIN Public public123
 
 # Switch between users
 USER Public
@@ -270,11 +287,12 @@ MKDIR PublicFiles
 USER Developer
 WHOAMI
 MKDIR Projects
-WRITE Projects/hello.py print("Hello from Developer!")
+WRITE Projects/hello.py "print('Hello from Developer!')"
 
 USER Admin
 WHOAMI
 MKDIR AdminFiles
+WRITE AdminFiles/secure.txt "Admin-only content"
 
 # List all users
 USERS
@@ -423,11 +441,13 @@ C:\USERS\
 - **Trash Management**: `TRASH` and `EMPTYTRASH` commands
 
 ### Multi-User System
+- **Built-in Users**: Admin and Public users with secure authentication
 - **Dynamic User Creation**: `ADDUSER` creates users with custom names
-- **User Validation**: Usernames must contain only letters, numbers, and underscores
+- **Secure Login**: SHA-256 password hashing with account lockout protection
 - **Isolated Directories**: Each user has separate file space
 - **Profile Persistence**: User data saved between sessions
-- **Empty Start**: New users start with only README.txt (no preset directories)
+- **Dual Storage**: Users saved to both virtual filesystem and file explorer
+- **System Integration**: Admin user has additional System directory for security
 
 ### Git Integration
 - **Complete Git Support**: All major Git commands implemented

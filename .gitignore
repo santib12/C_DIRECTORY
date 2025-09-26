@@ -1,26 +1,35 @@
 # ===========================================
-# PERSONAL USER DATA (DO NOT COMMIT)
+# USER DATA PROTECTION
 # ===========================================
-# Hide all user directories except hardcoded Admin and Public
-data/USERS/*/
-!data/USERS/Admin/
-!data/USERS/Public/
-
-# Hide all user subdirectories and files except README.txt
+# Allow system users and dynamic users, but hide personal data
 data/USERS/*/Desktop/
 data/USERS/*/Documents/
 data/USERS/*/Downloads/
 data/USERS/*/Settings/
 data/USERS/*/System/
-data/USERS/*/test/
-data/USERS/*/TESTING_ENVIORMENT/
-data/USERS/*/fashion/
-data/USERS/*/integral/
-data/USERS/*/oryem/
-data/USERS/*/3358/
-data/USERS/*/C++_FOLDER/
-data/USERS/*/repo-folder/
-data/USERS/*/repo_folder/
+
+# Hide personal projects and sensitive data in user folders
+data/USERS/*/projects/
+data/USERS/*/workspace/
+data/USERS/*/development/
+data/USERS/*/personal/
+data/USERS/*/my*/
+data/USERS/*/*project*/
+data/USERS/*/*app*/
+data/USERS/*/*studio*/
+
+# Allow README.txt files for all users
+!data/USERS/*/README.txt
+
+# Hide any personal projects or custom directories in user folders
+data/USERS/*/projects/
+data/USERS/*/workspace/
+data/USERS/*/development/
+data/USERS/*/personal/
+data/USERS/*/my*/
+data/USERS/*/*project*/
+data/USERS/*/*app*/
+data/USERS/*/*studio*/
 
 # Allow only README.txt files for system users
 !data/USERS/Admin/README.txt
